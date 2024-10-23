@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Fetch Example with CORS Proxy</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+
+    <form id="addressForm">
+        <label for="address">Podaj adres:</label>
+        <input type="text" id="address" name="address">
+        <button type="submit">Wyślij</button>
+    </form>
+
+    <div id="results"></div>
+
+    <script>
+        $(document).ready(function() {
+            $('#addressForm').on('submit', function(event) {
+                event.preventDefault(); // Zatrzymanie przeładowania strony
+
+                let address = $('#address').val();
+                if (!address) {
+                    $('#results').html("<p>Brak adresu!</p>");
+                    return;
+                }
+
+                let proxyUrl = 'https://cors-anywhere.herokuapp.com/'; // Publiczny serwis proxy
+                let targetUrl = `https://trailblazer.mainnet.taiko.xyz/s2/user/history?address=${address}&page=0`;
+
+                // Wyświetl informację o działaniu
+                $('#results').html("<p>Ładowanie danych...</p>");
+
+                fetch(proxyUrl + targetUrl, {
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0', // Symulacja przeglądarki
+                        'Accept': 'application/json',
+                        'Accept-Language': 'en-US,en;q=0.5'
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json(); // Parsowanie odpowiedzi JSON
+                })
+                .then(data => {
+                    // Sprawdzanie, czy są dane
+                    if (!data.items || data.items.length === 0) {
+                        $('#results').html("<p>Brak danych dla tego adresu!</p>");
+                        return;
+                    }
+
+                    let points = { 'Transaction': 0, 'TransactionValue': 0 };
+                    let today = new Date(data.items[0].date * 1000).toISOString().split('T')[0];
+                    let lastTranDate = data.items[0].date;
+
+                    data.items.forEach(item => {
+                        points[item.event] = (points[item.event] || 0) + item.points;
+                    });
+
+                    let dateTimeUTC = new Date(lastTranDate * 1000).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' });
+
+                    // Wyświetlanie wyników
+                    $('#results').html(`
+                        <h2>Transaction: ${points.Transaction}</h2>
+                        <h2>Transaction Value: ${points.TransactionValue}</h2>
+                        <h2>Last tran date: ${dateTimeUTC}</h2>
+                    `);
+                })
+                .catch(error => {
+                    $('#results').html(`<p>Błąd: ${error.message}</p>`);
+                });
+            });
+        });
+    </script>
+
+</body>
+</html>
