@@ -34,6 +34,7 @@
                 let points = { 'Transaction': 0, 'TransactionValue': 0 };
                 let exitMainLoop = false;
                 let lastTranDate;
+                let j = 0;
 
                 const fetchPage = (page) => {
                     if (exitMainLoop || page > 10) return;
@@ -73,6 +74,9 @@
                                 return;
                             }
 
+                            if (item.event === 'Transaction') {
+                                j++;
+                            }
                             // Sumowanie punktów
                             points[item.event] = (points[item.event] || 0) + item.points;
                         });
@@ -90,6 +94,7 @@
                                 <h2>Transaction: ${transactionRounded}</h2>
                                 <h2>Transaction Value: ${transactionValueRounded}</h2>
                                 <h2>Last tran date: ${dateTimeUTC}</h2>
+                                <h2>Transaction count: ${j}</h2>
                             `);
                         }
                     })
