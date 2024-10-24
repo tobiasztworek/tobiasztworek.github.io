@@ -74,7 +74,7 @@
                             }
 
                             // Sumowanie punktów
-                            points[item.event] = (points[item.event] || 0) + item.points;
+                            points[item.event] = (points[item.event] || 0) + item.points.toFixed(4);
                         });
 
                         if (!exitMainLoop) {
