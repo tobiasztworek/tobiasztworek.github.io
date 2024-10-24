@@ -18,6 +18,16 @@
 
     <script>
         $(document).ready(function() {
+
+            const queryString = window.location.search;
+            //console.log(queryString);
+            const urlParams = new URLSearchParams(queryString);
+            //console.log(urlParams);
+            if(urlParams.get('address') !== ''){
+                console.log('Address=' + urlParams.get('address') + '@');
+                $('#address').val(urlParams.get('address'));
+            }
+
             $('#addressForm').on('submit', function(event) {
                 event.preventDefault(); // Zatrzymanie przeładowania strony
 
