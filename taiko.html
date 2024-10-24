@@ -7,7 +7,7 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 <body>
-    <a href="https://cors-anywhere.herokuapp.com/corsdemo">https://cors-anywhere.herokuapp.com/corsdemo</a></br>
+    <a href="https://cors-anywhere.herokuapp.com/corsdemo">When error run and click button https://cors-anywhere.herokuapp.com/corsdemo</a></br>
     <form id="addressForm">
         <label for="address">Podaj adres:</label>
         <input type="text" id="address" name="address">
@@ -84,7 +84,7 @@
 
                             // Wyświetlanie wyników
                             $('#results').append(`
-                                <h2>Transaction: ${points.Transaction}</h2>
+                                <h2>Transaction: ${points.Transaction.toFixed(4)}</h2>
                                 <h2>Transaction Value: ${points.TransactionValue}</h2>
                                 <h2>Last tran date: ${dateTimeUTC}</h2>
                             `);
