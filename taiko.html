@@ -23,7 +23,7 @@
 
                 let address = $('#address').val();
                 if (!address) {
-                    $('#results').html("<p>Brak adresu!</p>");
+                    $('#results').html("<p>Missing address!</p>");
                     return;
                 }
 
@@ -57,7 +57,7 @@
                     })
                     .then(data => {
                         if (!data.items || data.items.length === 0) {
-                            $('#results').html("<p>Brak danych dla tego adresu!</p>");
+                            $('#results').html("<p>Missing data for this address!</p>");
                             return;
                         }
 
@@ -104,7 +104,7 @@
                 };
 
                 // Inicjuj pobieranie danych od strony 0
-                $('#results').html("<p>Ładowanie danych...</p>");
+                $('#results').html("<p>Loading data...</p>");
                 fetchPage(0);
             });
         });
