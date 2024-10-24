@@ -81,11 +81,14 @@
                             fetchPage(page + 1); // Pobieranie kolejnej strony
                         } else {
                             let dateTimeUTC = new Date(lastTranDate * 1000).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' });
+                            let transactionRounded = points.Transaction.toFixed(4);
+                            let transactionValueRounded = points.TransactionValue.toFixed(4);
+
 
                             // Wyświetlanie wyników
                             $('#results').append(`
-                                <h2>Transaction: ${points.Transaction.toFixed(4)}</h2>
-                                <h2>Transaction Value: ${points.TransactionValue}</h2>
+                                <h2>Transaction: ${transactionRounded}</h2>
+                                <h2>Transaction Value: ${transactionValueRounded}</h2>
                                 <h2>Last tran date: ${dateTimeUTC}</h2>
                             `);
                         }
