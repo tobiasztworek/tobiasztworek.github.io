@@ -66,12 +66,12 @@
                         return response.json(); // Parsowanie odpowiedzi JSON
                     })
                     .then(data => {
-                        if (!data.items || data.items.length === 0) {
+                        if (!data.data.items || data.data.items.length === 0) {
                             $('#results').html("<p>Missing data for this address!</p>");
                             return;
                         }
 
-                        data.items.forEach(item => {
+                        data.data.items.forEach(item => {
                             let itemDate = new Date(item.date * 1000).toISOString().split('T')[0]; // konwersja daty
                             if (today === '') {
                                 today = itemDate;
