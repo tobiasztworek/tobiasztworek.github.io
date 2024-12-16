@@ -68,7 +68,7 @@
                     .then(data => {
                         if (!data.data.items || data.data.items.length === 0) {
                             $('#results').html("<p>Missing data for this address!</p>");
-                            return;
+                            //return;
                         }
 
                         data.data.items.forEach(item => {
