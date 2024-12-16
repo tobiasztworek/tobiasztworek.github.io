@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TAIKO S3 - today total points v2.1</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <a href="https://cors-anywhere.herokuapp.com/corsdemo">When error run and click button to enable Cord proxy</a><br/><br/>
+    <form id="addressForm">
+        <label for="address">Wallet address:</label>
+        <input type="text" id="address" name="address" size=50>
+        <button type="submit">Check</button>
+    </form>
+
+    <div id="results"></div>
+
+    <script>
+        $(document).ready(function() {
+
+            const queryString = window.location.search;
+            //console.log(queryString);
+            const urlParams = new URLSearchParams(queryString);
+            //console.log(urlParams);
+            if(urlParams.get('address') !== ''){
+                console.log('Address=' + urlParams.get('address') + '@');
+                $('#address').val(urlParams.get('address'));
+            }
+
+            $('#addressForm').on('submit', function(event) {
+                event.preventDefault(); // Zatrzymanie przeładowania strony
+
+                let address = $('#address').val();
+                if (!address) {
+                    $('#results').html("<p>Missing address!</p>");
+                    return;
+                }
+
+                let proxyUrl = 'https://cors-anywhere.herokuapp.com/'; // Publiczny serwis proxy
+                let baseUrl = `https://trailblazer.mainnet.taiko.xyz/s3/user/history?address=${address}&page=`;
+
+                let today = '';
+                let points = { 'Transaction': 0, 'TransactionValue': 0 };
+                let exitMainLoop = false;
+                let lastTranDate;
+                let j = 0;
+
+                const fetchPage = (page) => {
+                    if (exitMainLoop || page > 10) return;
+
+                    let targetUrl = baseUrl + page;
+
+                    fetch(proxyUrl + targetUrl, {
+                        method: 'GET',
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0', // Symulacja przeglądarki
+                            'Accept': 'application/json',
+                            'Accept-Language': 'en-US,en;q=0.5'
+                        }
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json(); // Parsowanie odpowiedzi JSON
+                    })
+                    .then(data => {
+                        if (!data.data.items || data.data.items.length === 0) {
+                            $('#results').html("<p>Missing data for this address!</p>");
+                            return;
+                        }
+
+                        data.data.items.forEach(item => {
+                            let itemDate = new Date(item.date * 1000).toISOString().split('T')[0]; // konwersja daty
+                            if (today === '') {
+                                today = itemDate;
+                                lastTranDate = item.date;
+                            }
+
+                            if (today !== itemDate) {
+                                //$('#results').append(`<p><font color='red'>Wychodzę na stronie ${page}</font></p>`);
+                                exitMainLoop = true;
+                                return;
+                            }
+
+                            if (item.event === 'Transaction') {
+                                j++;
+                            }
+                            // Sumowanie punktów
+                            points[item.event] = (points[item.event] || 0) + item.points;
+                        });
+
+                        if (!exitMainLoop) {
+                            fetchPage(page + 1); // Pobieranie kolejnej strony
+                        } else {
+                            let dateTimeUTC = new Date(lastTranDate * 1000).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' });
+                            let transactionRounded = points.Transaction.toFixed(4);
+                            let transactionValueRounded = points.TransactionValue.toFixed(4);
+
+
+                            // Wyświetlanie wyników
+                            $('#results').append(`
+                                <h2>Transaction: ${transactionRounded}</h2>
+                                <h2>Transaction Value: ${transactionValueRounded}</h2>
+                                <h2>Last tran date: ${dateTimeUTC}</h2>
+                                <h2>Transaction count: ${j}</h2>
+                            `);
+                        }
+                    })
+                    .catch(error => {
+                        $('#results').html(`<p>Błąd: ${error.message}</p>`);
+                    });
+                };
+
+                // Inicjuj pobieranie danych od strony 0
+                $('#results').html("<p>Loading data...</p>");
+                fetchPage(0);
+            });
+        });
+    </script>
+
+</body>
+</html>
