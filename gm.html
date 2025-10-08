@@ -20,7 +20,7 @@
 </head>
 <body>
   <header>
-    <h1 style="margin:0">GM dApp — Base v1.2</h1>
+    <h1 style="margin:0">GM dApp — Base v1.2.1</h1>
     <div style="margin-left:auto">
       <button id="connectBtn">Połącz MetaMask</button>
       <button id="disconnectBtn" disabled>Rozłącz</button>
@@ -80,28 +80,36 @@
   const setFee = (t) => feeEthText.textContent = t;
   const setTx = (t) => txStatus.textContent = t;
 
-  async function connect() {
+    async function connect() {
     if (!window.ethereum) return alert("Zainstaluj MetaMask.");
-    try {
-      await window.ethereum.request({ method: "eth_requestAccounts" });
-      provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
-      connectedAccount = await signer.getAddress();
-      gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
-      const net = await provider.getNetwork();
 
-      setStatus("Połączony");
-      setAccount(connectedAccount);
-      setChain(chainName(net.chainId));
-      connectBtn.disabled = true;
-      disconnectBtn.disabled = false;
-      fetchFeeBtn.disabled = false;
-      sayGmBtn.disabled = false;
+    try {
+        await window.ethereum.request({ method: "eth_requestAccounts" });
+
+        // ✅ Dodane jawne wskazanie sieci Base Sepolia (bez ENS)
+        provider = new ethers.BrowserProvider(window.ethereum, {
+        name: "base-sepolia",
+        chainId: 84532,
+        });
+
+        signer = await provider.getSigner();
+        connectedAccount = await signer.getAddress();
+        gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
+        const net = await provider.getNetwork();
+
+        setStatus("Połączony");
+        setAccount(connectedAccount);
+        setChain(chainName(net.chainId));
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        fetchFeeBtn.disabled = false;
+        sayGmBtn.disabled = false;
     } catch (e) {
-      console.error(e);
-      setStatus("Błąd połączenia");
+        console.error(e);
+        setStatus("Błąd połączenia");
     }
-  }
+    }
+
 
   function disconnect() {
     provider = signer = gmContract = connectedAccount = null;
