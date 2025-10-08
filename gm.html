@@ -1,69 +1,151 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GM dApp on Base</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.min.js"></script>
-</head>      
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GM dApp (Base)</title>
+
+  <!-- ✅ poprawiona biblioteka Ethers -->
+  <script src="https://unpkg.com/ethers@6.11.1/dist/ethers.umd.min.js"></script>
+
+  <style>
+    body { font-family: Inter, Arial, sans-serif; max-width:800px; margin:24px auto; padding:0 16px; color:#111 }
+    header { display:flex; gap:12px; align-items:center; margin-bottom:18px; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; cursor:pointer }
+    button:disabled { opacity:0.5; cursor:not-allowed }
+    .row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+    .status { padding:12px; border-radius:8px; background:#f8f9fb; border:1px solid #eee; }
+    code { background:#f2f2f2; padding:2px 6px; border-radius:6px; font-size:0.95em; }
+  </style>
+</head>
 <body>
-<h1>Say GM on Base v.1.1</h1>
-<button id="connectBtn">Connect MetaMask</button>
-<button id="sayGmBtn" disabled>Say GM</button>
-<p id="status"></p>
+  <header>
+    <h1 style="margin:0">GM dApp — Base v1.2</h1>
+    <div style="margin-left:auto">
+      <button id="connectBtn">Połącz MetaMask</button>
+      <button id="disconnectBtn" disabled>Rozłącz</button>
+    </div>
+  </header>
+
+  <div class="status" id="appStatus">
+    <div><strong>Stan:</strong> <span id="statusText">Niepołączony</span></div>
+    <div><strong>Konto:</strong> <span id="account">—</span></div>
+    <div><strong>Sieć (chainId):</strong> <span id="chain">—</span></div>
+    <div><strong>Opłata (0.01 USD) ≈</strong> <span id="feeEth">—</span> ETH</div>
+  </div>
+
+  <div class="row" style="margin-top:16px">
+    <button id="fetchFeeBtn" disabled>Pobierz aktualną opłatę</button>
+    <button id="sayGmBtn" disabled>Say GM (zapłać)</button>
+  </div>
+
+  <div style="margin-top:12px">
+    <strong>Tx status:</strong>
+    <div id="txStatus">—</div>
+  </div>
 
 <script>
-const gmContractAddress = "0xYourContractAddressHere"; // wklej swój adres kontraktu GM
-const gmContractAbi = [
-  // Minimal ABI do sayGM i Chainlink price feed
-  "function sayGM() external payable",
-  "function ethUsdPriceFeed() view returns (address)",
-  "function getGmFeeInEth() view returns (uint256)"
-];
+(() => {
+  const GM_CONTRACT_ADDRESS = "0xYourContractAddressHere"; // ← wstaw adres swojego kontraktu!
+  const GM_ABI = [
+    "function sayGM() external payable",
+    "function getGmFeeInEth() view returns (uint256)"
+  ];
 
-// Chainlink Price Feed ABI
-const priceFeedAbi = [
-  "function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)"
-];
+  const connectBtn = document.getElementById("connectBtn");
+  const disconnectBtn = document.getElementById("disconnectBtn");
+  const fetchFeeBtn = document.getElementById("fetchFeeBtn");
+  const sayGmBtn = document.getElementById("sayGmBtn");
+  const statusText = document.getElementById("statusText");
+  const accountText = document.getElementById("account");
+  const chainText = document.getElementById("chain");
+  const feeEthText = document.getElementById("feeEth");
+  const txStatus = document.getElementById("txStatus");
 
-let provider;
-let signer;
-let gmContract;
+  let provider = null;
+  let signer = null;
+  let gmContract = null;
+  let connectedAccount = null;
 
-document.getElementById("connectBtn").onclick = async () => {
-  if (window.ethereum) {
-    await window.ethereum.request({ method: "eth_requestAccounts" });
-    provider = new ethers.BrowserProvider(window.ethereum);
-    signer = await provider.getSigner();
-    gmContract = new ethers.Contract(gmContractAddress, gmContractAbi, signer);
+  const chainName = (chainId) => ({
+    8453: "Base Mainnet (8453)",
+    84532: "Base Sepolia (84532)",
+    1: "Ethereum Mainnet",
+    11155111: "Sepolia"
+  }[chainId] || `Chain ${chainId}`);
 
-    document.getElementById("status").innerText = "Connected to MetaMask!";
-    document.getElementById("sayGmBtn").disabled = false;
-  } else {
-    alert("Install MetaMask!");
+  const setStatus = (t) => statusText.textContent = t;
+  const setAccount = (t) => accountText.textContent = t;
+  const setChain = (t) => chainText.textContent = t;
+  const setFee = (t) => feeEthText.textContent = t;
+  const setTx = (t) => txStatus.textContent = t;
+
+  async function connect() {
+    if (!window.ethereum) return alert("Zainstaluj MetaMask.");
+    try {
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      connectedAccount = await signer.getAddress();
+      gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
+      const net = await provider.getNetwork();
+
+      setStatus("Połączony");
+      setAccount(connectedAccount);
+      setChain(chainName(net.chainId));
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+      fetchFeeBtn.disabled = false;
+      sayGmBtn.disabled = false;
+    } catch (e) {
+      console.error(e);
+      setStatus("Błąd połączenia");
+    }
   }
-};
 
-document.getElementById("sayGmBtn").onclick = async () => {
-  try {
-    document.getElementById("status").innerText = "Calculating fee...";
-    
-    // Pobierz fee z kontraktu
-    const feeWei = await gmContract.getGmFeeInEth();
-    
-    document.getElementById("status").innerText = `Fee in ETH: ${ethers.formatEther(feeWei)} ETH`;
-
-    // Wywołaj sayGM z odpowiednią wartością
-    const tx = await gmContract.sayGM({ value: feeWei });
-    document.getElementById("status").innerText = `Transaction sent: ${tx.hash}`;
-
-    await tx.wait();
-    document.getElementById("status").innerText = `GM said successfully! Tx: ${tx.hash}`;
-  } catch (err) {
-    console.error(err);
-    document.getElementById("status").innerText = `Error: ${err.message}`;
+  function disconnect() {
+    provider = signer = gmContract = connectedAccount = null;
+    setStatus("Niepołączony");
+    setAccount("—");
+    setChain("—");
+    setFee("—");
+    setTx("—");
+    connectBtn.disabled = false;
+    disconnectBtn.disabled = true;
+    fetchFeeBtn.disabled = true;
+    sayGmBtn.disabled = true;
   }
-};
+
+  async function fetchFee() {
+    try {
+      const feeWei = await gmContract.getGmFeeInEth();
+      const feeEth = ethers.formatEther(feeWei);
+      setFee(feeEth);
+      return feeWei;
+    } catch (e) {
+      console.error(e);
+      setStatus("Błąd pobierania fee");
+    }
+  }
+
+  async function sayGm() {
+    try {
+      const feeWei = await fetchFee();
+      const tx = await gmContract.sayGM({ value: feeWei });
+      setTx("Wysłano tx: " + tx.hash);
+      await tx.wait();
+      setTx("✅ Potwierdzono: " + tx.hash);
+    } catch (e) {
+      console.error(e);
+      setStatus("Błąd: " + (e.reason || e.message));
+    }
+  }
+
+  connectBtn.onclick = connect;
+  disconnectBtn.onclick = disconnect;
+  fetchFeeBtn.onclick = fetchFee;
+  sayGmBtn.onclick = sayGm;
+})();
 </script>
 </body>
 </html>
