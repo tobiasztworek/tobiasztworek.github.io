@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GM dApp (Base)</title>
+  <title>GM dApp (Base) — ENS-safe</title>
 
-  <!-- ✅ poprawiona biblioteka Ethers -->
+  <!-- ethers UMD -->
   <script src="https://unpkg.com/ethers@6.11.1/dist/ethers.umd.min.js"></script>
 
   <style>
-    body { font-family: Inter, Arial, sans-serif; max-width:800px; margin:24px auto; padding:0 16px; color:#111 }
+    body { font-family: Inter, Arial, sans-serif; max-width:900px; margin:24px auto; padding:0 16px; color:#111 }
     header { display:flex; gap:12px; align-items:center; margin-bottom:18px; }
     button { padding:8px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; cursor:pointer }
     button:disabled { opacity:0.5; cursor:not-allowed }
@@ -20,7 +20,7 @@
 </head>
 <body>
   <header>
-    <h1 style="margin:0">GM dApp — Base v1.2.1</h1>
+    <h1 style="margin:0">GM dApp — Base v.1.3</h1>
     <div style="margin-left:auto">
       <button id="connectBtn">Połącz MetaMask</button>
       <button id="disconnectBtn" disabled>Rozłącz</button>
@@ -46,12 +46,14 @@
 
 <script>
 (() => {
-  const GM_CONTRACT_ADDRESS = "0xYourContractAddressHere"; // ← wstaw adres swojego kontraktu!
+  // === KONFIGURACJA: ustaw swój adres kontraktu poniżej ===
+  const GM_CONTRACT_ADDRESS = "0xYourContractAddressHere"; // <- ZAMIENIĆ!
   const GM_ABI = [
     "function sayGM() external payable",
     "function getGmFeeInEth() view returns (uint256)"
   ];
 
+  // UI refs
   const connectBtn = document.getElementById("connectBtn");
   const disconnectBtn = document.getElementById("disconnectBtn");
   const fetchFeeBtn = document.getElementById("fetchFeeBtn");
@@ -66,12 +68,12 @@
   let signer = null;
   let gmContract = null;
   let connectedAccount = null;
+  let currentChainId = null;
 
   const chainName = (chainId) => ({
     8453: "Base Mainnet (8453)",
     84532: "Base Sepolia (84532)",
     1: "Ethereum Mainnet",
-    11155111: "Sepolia"
   }[chainId] || `Chain ${chainId}`);
 
   const setStatus = (t) => statusText.textContent = t;
@@ -80,79 +82,192 @@
   const setFee = (t) => feeEthText.textContent = t;
   const setTx = (t) => txStatus.textContent = t;
 
-    async function connect() {
-    if (!window.ethereum) return alert("Zainstaluj MetaMask.");
-
+  // Connect: use window.ethereum.request to get accounts/chainId (avoids ENS tries)
+  async function connect() {
+    if (!window.ethereum) {
+      alert("Zainstaluj MetaMask (https://metamask.io) i spróbuj ponownie.");
+      return;
+    }
     try {
-        await window.ethereum.request({ method: "eth_requestAccounts" });
+      setStatus("Proszę potwierdzić połączenie w MetaMask...");
 
-        // ✅ Dodane jawne wskazanie sieci Base Sepolia (bez ENS)
-        provider = new ethers.BrowserProvider(window.ethereum, {
-        name: "base-sepolia",
-        chainId: 84532,
-        });
+      // POBIERZ konta i chainId bezpośrednio z window.ethereum (nie przez ethers API)
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      if (!accounts || accounts.length === 0) {
+        setStatus("Brak kont w MetaMask");
+        return;
+      }
+      connectedAccount = accounts[0];
 
-        signer = await provider.getSigner();
-        connectedAccount = await signer.getAddress();
-        gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
-        const net = await provider.getNetwork();
+      const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
+      currentChainId = parseInt(chainIdHex, 16);
 
-        setStatus("Połączony");
-        setAccount(connectedAccount);
-        setChain(chainName(net.chainId));
-        connectBtn.disabled = true;
-        disconnectBtn.disabled = false;
-        fetchFeeBtn.disabled = false;
-        sayGmBtn.disabled = false;
-    } catch (e) {
-        console.error(e);
-        setStatus("Błąd połączenia");
+      // Teraz utwórz BrowserProvider, jawnie podając sieć (aby ethers nie próbował ENS)
+      provider = new ethers.BrowserProvider(window.ethereum, {
+        name: currentChainId === 84532 ? "base-sepolia" : (currentChainId === 8453 ? "base-mainnet" : "custom"),
+        chainId: currentChainId
+      });
+
+      // signer (nie wywołujemy signer.getAddress() — wykorzystujemy już connectedAccount)
+      signer = await provider.getSigner();
+
+      // contract z signerem
+      gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
+
+      // UI update
+      setStatus("Połączony");
+      setAccount(connectedAccount);
+      setChain(chainName(currentChainId));
+      setTx("—");
+
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+      fetchFeeBtn.disabled = false;
+      sayGmBtn.disabled = false;
+
+      // listeners
+      window.ethereum.on("accountsChanged", handleAccountsChanged);
+      window.ethereum.on("chainChanged", handleChainChanged);
+
+    } catch (err) {
+      console.error("connect error:", err);
+      setStatus("Błąd połączenia: " + (err?.message || err));
     }
-    }
-
+  }
 
   function disconnect() {
-    provider = signer = gmContract = connectedAccount = null;
+    try {
+      window.ethereum?.removeListener("accountsChanged", handleAccountsChanged);
+      window.ethereum?.removeListener("chainChanged", handleChainChanged);
+    } catch (e) { /* ignore */ }
+
+    provider = signer = gmContract = null;
+    connectedAccount = null;
+    currentChainId = null;
+
     setStatus("Niepołączony");
     setAccount("—");
     setChain("—");
     setFee("—");
     setTx("—");
+
     connectBtn.disabled = false;
     disconnectBtn.disabled = true;
     fetchFeeBtn.disabled = true;
     sayGmBtn.disabled = true;
   }
 
-  async function fetchFee() {
+  // handlers - use data from event directly, avoid provider.getNetwork() calls
+  async function handleAccountsChanged(accounts) {
+    if (!accounts || accounts.length === 0) {
+      disconnect();
+    } else {
+      connectedAccount = accounts[0];
+      setAccount(connectedAccount);
+      // re-init signer + contract
+      try {
+        // re-create provider+signer to be safe
+        provider = new ethers.BrowserProvider(window.ethereum, { name: currentChainId ? (currentChainId===84532?"base-sepolia":"base-mainnet") : "custom", chainId: currentChainId || 0 });
+        signer = await provider.getSigner();
+        gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
+      } catch (e) {
+        console.error("accountsChanged handler error", e);
+      }
+    }
+  }
+
+  function handleChainChanged(chainIdHex) {
+    // chainIdHex e.g. "0x14888"
     try {
+      const parsed = parseInt(chainIdHex, 16);
+      currentChainId = parsed;
+      setChain(chainName(parsed));
+      setFee("—");
+      setTx("—");
+      // re-init provider+signer for new chain
+      provider = new ethers.BrowserProvider(window.ethereum, {
+        name: parsed === 84532 ? "base-sepolia" : (parsed === 8453 ? "base-mainnet" : "custom"),
+        chainId: parsed
+      });
+      provider.getSigner().then(s => { signer = s; gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer); }).catch(()=>{});
+    } catch (e) {
+      console.error("handleChainChanged parse error", e);
+    }
+  }
+
+  // Fetch fee view (calls contract view function)
+  async function fetchFee() {
+    if (!gmContract) { setStatus("Brak kontraktu — połącz MetaMask"); return null; }
+    try {
+      setStatus("Pobieram opłatę z kontraktu...");
+      setTx("—");
       const feeWei = await gmContract.getGmFeeInEth();
       const feeEth = ethers.formatEther(feeWei);
       setFee(feeEth);
+      setStatus("Opłata pobrana");
       return feeWei;
     } catch (e) {
-      console.error(e);
-      setStatus("Błąd pobierania fee");
+      console.error("fetchFee error", e);
+      setStatus("Błąd pobierania opłaty: " + (e?.message || e));
+      setFee("—");
+      return null;
     }
   }
 
+  // Send sayGM with value
   async function sayGm() {
+    if (!gmContract) { setStatus("Brak kontraktu — połącz najpierw"); return; }
     try {
+      sayGmBtn.disabled = true;
+      fetchFeeBtn.disabled = true;
+      setStatus("Przygotowuję transakcję...");
       const feeWei = await fetchFee();
+      if (!feeWei) throw new Error("Nie udało się pobrać fee");
+      setStatus(`Wysyłam tx (value ${ethers.formatEther(feeWei)} ETH)...`);
       const tx = await gmContract.sayGM({ value: feeWei });
-      setTx("Wysłano tx: " + tx.hash);
+      setTx("Wysłano: " + tx.hash);
+      setStatus("Czekam na potwierdzenie...");
       await tx.wait();
-      setTx("✅ Potwierdzono: " + tx.hash);
+      setStatus("Say GM zakończone sukcesem ✅");
+      setTx("Potwierdzono: " + tx.hash);
     } catch (e) {
-      console.error(e);
-      setStatus("Błąd: " + (e.reason || e.message));
+      console.error("sayGm error", e);
+      // pokaż możliwie czytelny komunikat
+      const msg = e?.reason || e?.data?.message || e?.message || String(e);
+      setStatus("Błąd wysyłki: " + msg);
+    } finally {
+      sayGmBtn.disabled = false;
+      fetchFeeBtn.disabled = false;
     }
   }
 
-  connectBtn.onclick = connect;
-  disconnectBtn.onclick = disconnect;
-  fetchFeeBtn.onclick = fetchFee;
-  sayGmBtn.onclick = sayGm;
+  // button handlers
+  connectBtn.addEventListener("click", connect);
+  disconnectBtn.addEventListener("click", disconnect);
+  fetchFeeBtn.addEventListener("click", fetchFee);
+  sayGmBtn.addEventListener("click", sayGm);
+
+  // init: auto-check if already connected (without triggering ENS ops)
+  (async function initCheck() {
+    if (!window.ethereum) {
+      setStatus("MetaMask not found. Zainstaluj MetaMask.");
+      return;
+    }
+    try {
+      const accounts = await window.ethereum.request({ method: "eth_accounts" });
+      if (accounts && accounts.length > 0) {
+        // set minimal UI and allow manual connect to re-init provider safely
+        setStatus("MetaMask wykryty, konto połączone lokalnie. Kliknij 'Połącz MetaMask' by dApp zainicjował połączenie.");
+        accountText.textContent = accounts[0];
+        connectBtn.disabled = false;
+      } else {
+        setStatus("MetaMask wykryty, ale brak sesji. Kliknij 'Połącz MetaMask'.");
+      }
+    } catch (e) {
+      setStatus("Gotowy do połączenia z MetaMask");
+    }
+  })();
+
 })();
 </script>
 </body>
