@@ -82,58 +82,37 @@
   const setFee = (t) => feeEthText.textContent = t;
   const setTx = (t) => txStatus.textContent = t;
 
-  // Connect: use window.ethereum.request to get accounts/chainId (avoids ENS tries)
   async function connect() {
-    if (!window.ethereum) {
-      alert("Zainstaluj MetaMask (https://metamask.io) i spróbuj ponownie.");
-      return;
-    }
-    try {
-      setStatus("Proszę potwierdzić połączenie w MetaMask...");
+  if (!window.ethereum) return alert("Zainstaluj MetaMask.");
 
-      // POBIERZ konta i chainId bezpośrednio z window.ethereum (nie przez ethers API)
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-      if (!accounts || accounts.length === 0) {
-        setStatus("Brak kont w MetaMask");
-        return;
-      }
-      connectedAccount = accounts[0];
+  try {
+    await window.ethereum.request({ method: "eth_requestAccounts" });
 
-      const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
-      currentChainId = parseInt(chainIdHex, 16);
+    // ✅ 1. Provider RPC Base Sepolia — bez ENS
+    const rpcProvider = new ethers.JsonRpcProvider("https://sepolia.base.org");
 
-      // Teraz utwórz BrowserProvider, jawnie podając sieć (aby ethers nie próbował ENS)
-      provider = new ethers.BrowserProvider(window.ethereum, {
-        name: currentChainId === 84532 ? "base-sepolia" : (currentChainId === 8453 ? "base-mainnet" : "custom"),
-        chainId: currentChainId
-      });
+    // ✅ 2. BrowserProvider tylko do podpisywania
+    const browserProvider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await browserProvider.getSigner();
+    const connectedAccount = await signer.getAddress();
 
-      // signer (nie wywołujemy signer.getAddress() — wykorzystujemy już connectedAccount)
-      signer = await provider.getSigner();
+    // ✅ 3. Kontrakt przez RPC, ale podpisywany przez signer
+    gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
 
-      // contract z signerem
-      gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
+    const net = await browserProvider.getNetwork();
 
-      // UI update
-      setStatus("Połączony");
-      setAccount(connectedAccount);
-      setChain(chainName(currentChainId));
-      setTx("—");
-
-      connectBtn.disabled = true;
-      disconnectBtn.disabled = false;
-      fetchFeeBtn.disabled = false;
-      sayGmBtn.disabled = false;
-
-      // listeners
-      window.ethereum.on("accountsChanged", handleAccountsChanged);
-      window.ethereum.on("chainChanged", handleChainChanged);
-
-    } catch (err) {
-      console.error("connect error:", err);
-      setStatus("Błąd połączenia: " + (err?.message || err));
-    }
+    setStatus("Połączony");
+    setAccount(connectedAccount);
+    setChain(chainName(net.chainId));
+    connectBtn.disabled = true;
+    disconnectBtn.disabled = false;
+    fetchFeeBtn.disabled = false;
+    sayGmBtn.disabled = false;
+  } catch (e) {
+    console.error(e);
+    setStatus("Błąd połączenia: " + (e.reason || e.message));
   }
+}
 
   function disconnect() {
     try {
