@@ -1,287 +1,279 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GM dApp (Base) — ENS-safe</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>GM dApp Multi-Chain</title>
+<!-- Bootstrap 5 CSS -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://unpkg.com/ethers@6.11.1/dist/ethers.umd.min.js"></script>
 
-  <!-- ethers UMD -->
-  <script src="https://unpkg.com/ethers@6.11.1/dist/ethers.umd.min.js"></script>
+<style>
+body {
+  background-color: #f3f4f6;
+  color: #111;
+  min-height: 100vh;
+  padding: 2rem;
+  font-family: "Inter", "Segoe UI", sans-serif;
+}
 
-  <style>
-    body { font-family: Inter, Arial, sans-serif; max-width:900px; margin:24px auto; padding:0 16px; color:#111 }
-    header { display:flex; gap:12px; align-items:center; margin-bottom:18px; }
-    button { padding:8px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; cursor:pointer }
-    button:disabled { opacity:0.5; cursor:not-allowed }
-    .row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
-    .status { padding:12px; border-radius:8px; background:#f8f9fb; border:1px solid #eee; }
-    code { background:#f2f2f2; padding:2px 6px; border-radius:6px; font-size:0.95em; }
-  </style>
+header {
+  background: linear-gradient(90deg, #4f46e5, #6366f1);
+  color: white;
+  padding: 1rem 2rem;
+  border-radius: 1rem;
+  margin-bottom: 2rem;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.status-card {
+  backdrop-filter: blur(12px);
+  background: rgba(255,255,255,0.7);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.status-card h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.txStatus {
+  margin-top: 1rem;
+  background: rgba(0,0,0,0.05);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.btn, .btn:focus, .btn:hover {
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+</style>
 </head>
 <body>
-  <header>
-    <h1 style="margin:0">GM dApp — Base v.1.3.2</h1>
-    <div style="margin-left:auto">
-      <button id="connectBtn">Połącz MetaMask</button>
-      <button id="disconnectBtn" disabled>Rozłącz</button>
-    </div>
-  </header>
 
-  <div class="status" id="appStatus">
-    <div><strong>Stan:</strong> <span id="statusText">Niepołączony</span></div>
-    <div><strong>Konto:</strong> <span id="account">—</span></div>
-    <div><strong>Sieć (chainId):</strong> <span id="chain">—</span></div>
-    <div><strong>Opłata (0.01 USD) ≈</strong> <span id="feeEth">—</span> ETH</div>
+<header class="d-flex align-items-center justify-content-between">
+  <h1>🌅 GM dApp Multi-Chain v.1.4</h1>
+  <div>
+    <button id="connectBtn" class="btn btn-light me-2">Connect MetaMask</button>
+    <button id="disconnectBtn" class="btn btn-secondary" disabled>Disconnect</button>
   </div>
+</header>
 
-  <div class="row" style="margin-top:16px">
-    <button id="fetchFeeBtn" disabled>Pobierz aktualną opłatę</button>
-    <button id="sayGmBtn" disabled>Say GM (zapłać)</button>
+<div id="networksContainer" class="container">
+  <div class="row g-4" id="networksRow">
+    <!-- Kontenery sieci wstawiane tutaj -->
   </div>
-
-  <div style="margin-top:12px">
-    <strong>Tx status:</strong>
-    <div id="txStatus">—</div>
-  </div>
+</div>
 
 <script>
 (() => {
-  // === KONFIGURACJA: ustaw swój adres kontraktu poniżej ===
-  const GM_CONTRACT_ADDRESS = "0xDe97573A58830D85dD3Ac58D76c8E8320De907c1"; // <- ZAMIENIĆ!
-  const GM_ABI = [
-    "function sayGM() external payable",
-    "function getGmFeeInEth() view returns (uint256)"
+  const NETWORKS = [
+    {
+      name: "Base Sepolia",
+      chainId: "0x14a34",
+      contractAddress: "0x714Be7D3D4fB4D52c714b00afFd1F297FD0E023f",
+      rpcUrl: "https://base-sepolia.rpc.thirdweb.com",
+      explorer: "https://sepolia.basescan.org/",
+      buttonColor: '#1a46e5',
+      logoUrl: "img/base.jpg"
+    },
+    {
+      name: "Ethereum Sepolia",
+      chainId: "0xaa36a7",
+      contractAddress: "0x43ef985e0A520A7331bf93319CE3e676c9FAEbc9",
+      rpcUrl: "https://rpc.sepolia.org",
+      explorer: "https://sepolia.etherscan.io/",
+      buttonColor: "#4a46e5",
+      logoUrl: "img/ether.svg"
+    },
+    {
+      name: "Optimism Sepolia",
+      chainId: "0xaa37dc",
+      contractAddress: "0x0a56E2E236547575b2db6EF7e872cd49bC91A556",
+      rpcUrl: "https://optimism-sepolia-public.nodies.app",
+      explorer: "https://testnet-explorer.optimism.io/",
+      buttonColor: "#FC0C2C",
+      logoUrl: "img/optimism.svg"
+    }
   ];
 
-  const BASE_SEPOLIA_PARAMS = {
-    chainId: '0x14a34', // 84532 w hex
-    chainName: 'Base Sepolia',
-    nativeCurrency: {
-      name: 'ETH',
-      symbol: 'ETH',
-      decimals: 18
-    },
-    rpcUrls: ['https://base-sepolia.rpc.thirdweb.com'], // możesz użyć innego RPC
-    blockExplorerUrls: ['https://sepolia.basescan.org/']
-  };
+  const GM_ABI = [
+    "function sayGM() external payable",
+    "function getGmFeeInEth() view returns (uint256)",
+    "function getUserSafe(address) view returns (uint256,uint256,bool)"
+  ];
 
-
-  // UI refs
   const connectBtn = document.getElementById("connectBtn");
   const disconnectBtn = document.getElementById("disconnectBtn");
-  const fetchFeeBtn = document.getElementById("fetchFeeBtn");
-  const sayGmBtn = document.getElementById("sayGmBtn");
-  const statusText = document.getElementById("statusText");
-  const accountText = document.getElementById("account");
-  const chainText = document.getElementById("chain");
-  const feeEthText = document.getElementById("feeEth");
-  const txStatus = document.getElementById("txStatus");
+  const networksRow = document.getElementById("networksRow");
 
-  let provider = null;
-  let signer = null;
-  let gmContract = null;
-  let connectedAccount = null;
-  let currentChainId = null;
+  let signer;
 
-  const chainName = (chainId) => ({
-    8453: "Base Mainnet (8453)",
-    84532: "Base Sepolia (84532)",
-    1: "Ethereum Mainnet",
-  }[chainId] || `Chain ${chainId}`);
-
-  const setStatus = (t) => statusText.textContent = t;
-  const setAccount = (t) => accountText.textContent = t;
-  const setChain = (t) => chainText.textContent = t;
-  const setFee = (t) => feeEthText.textContent = t;
-  const setTx = (t) => txStatus.textContent = t;
-
-  async function connect() {
-  if (!window.ethereum) return alert("Zainstaluj MetaMask.");
-
-  try {
-    await window.ethereum.request({ method: "eth_requestAccounts" });
-
-    // ✅ 1. Provider RPC Base Sepolia — bez ENS
-    const rpcProvider = new ethers.JsonRpcProvider("https://sepolia.base.org");
-
-    // ✅ 2. BrowserProvider tylko do podpisywania
-    const browserProvider = new ethers.BrowserProvider(window.ethereum);
-    const signer = await browserProvider.getSigner();
-    const connectedAccount = await signer.getAddress();
-
-    // ✅ 3. Kontrakt przez RPC, ale podpisywany przez signer
-    gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
-
-    const net = await browserProvider.getNetwork();
-
-    setStatus("Połączony");
-    setAccount(connectedAccount);
-    setChain(chainName(net.chainId));
-    connectBtn.disabled = true;
-    disconnectBtn.disabled = false;
-    fetchFeeBtn.disabled = false;
-    sayGmBtn.disabled = false;
-  } catch (e) {
-    console.error(e);
-    setStatus("Błąd połączenia: " + (e.reason || e.message));
-  }
-}
-
-  async function switchToBaseSepolia() {
-    if (!window.ethereum) throw new Error("MetaMask is not installed");
-
+  async function switchToNetwork(net) {
     try {
       await window.ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: BASE_SEPOLIA_PARAMS.chainId }]
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: net.chainId }]
       });
-    } catch (switchError) {
-      // Jeśli sieć nie istnieje w MetaMask, dodaj ją
-      if (switchError.code === 4902) {
+    } catch (err) {
+      if (err.code === 4902) {
         await window.ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [BASE_SEPOLIA_PARAMS]
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: net.chainId,
+            chainName: net.name,
+            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+            rpcUrls: [net.rpcUrl],
+            blockExplorerUrls: [net.explorer]
+          }]
         });
-      } else {
-        throw switchError;
-      }
+      } else throw err;
     }
   }
 
+  async function connect() {
+    if (!window.ethereum) return alert("Install MetaMask.");
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    connectBtn.disabled = true;
+    connectBtn.textContent = "Connected";
+    disconnectBtn.disabled = false;
+    NETWORKS.forEach(net => initNetworkContainer(net));
+    await updateAllStats();
+  }
 
   function disconnect() {
-    try {
-      window.ethereum?.removeListener("accountsChanged", handleAccountsChanged);
-      window.ethereum?.removeListener("chainChanged", handleChainChanged);
-    } catch (e) { /* ignore */ }
-
-    provider = signer = gmContract = null;
-    connectedAccount = null;
-    currentChainId = null;
-
-    setStatus("Niepołączony");
-    setAccount("—");
-    setChain("—");
-    setFee("—");
-    setTx("—");
-
+    signer = null;
+    networksRow.innerHTML = "";
     connectBtn.disabled = false;
     disconnectBtn.disabled = true;
-    fetchFeeBtn.disabled = true;
-    sayGmBtn.disabled = true;
+    connectBtn.textContent = "Connect MetaMask";
   }
 
-  // handlers - use data from event directly, avoid provider.getNetwork() calls
-  async function handleAccountsChanged(accounts) {
-    if (!accounts || accounts.length === 0) {
-      disconnect();
-    } else {
-      connectedAccount = accounts[0];
-      setAccount(connectedAccount);
-      // re-init signer + contract
+  function initNetworkContainer(net) {
+    const col = document.createElement("div");
+    col.className = "col-12 col-md-6";
+
+    const container = document.createElement("div");
+    container.className = "status-card";
+    container.dataset.chain = net.chainId;
+    container.innerHTML = `
+      <h2><img src="${net.logoUrl}" width="50" height="50" class="me-2 rounded">${net.name}</h2>
+      <div class="mb-3">
+        <div><strong>Status:</strong> <span class="statusText">—</span></div>
+        <div><strong>GM Fee:</strong> <span class="feeEth">—</span> ETH</div>
+        <div><strong>🔥 Streak:</strong> <span class="streak">—</span> dni</div>
+        <div><strong>💬 Total GM:</strong> <span class="totalGm">—</span></div>
+      </div>
+      <div class="d-flex gap-2 mb-2">
+        <button class="fetchFeeBtn btn btn-secondary flex-fill">Calculate fee</button>
+        <button class="sayGmBtn btn btn-secondary flex-fill">Say GM ☀️</button>
+      </div>
+      <div class="txStatus">—</div>
+    `;
+    col.appendChild(container);
+    networksRow.appendChild(col);
+
+    const fetchFeeBtn = container.querySelector(".fetchFeeBtn");
+    const sayGmBtn = container.querySelector(".sayGmBtn");
+    const statusText = container.querySelector(".statusText");
+    const feeEthText = container.querySelector(".feeEth");
+    const streakText = container.querySelector(".streak");
+    const totalGmText = container.querySelector(".totalGm");
+    const txStatus = container.querySelector(".txStatus");
+
+    fetchFeeBtn.style.backgroundColor = net.buttonColor;
+    sayGmBtn.style.backgroundColor = net.buttonColor;
+
+    let contract;
+
+    fetchFeeBtn.addEventListener("click", async () => {
       try {
-        // re-create provider+signer to be safe
-        provider = new ethers.BrowserProvider(window.ethereum, { name: currentChainId ? (currentChainId===84532?"base-sepolia":"base-mainnet") : "custom", chainId: currentChainId || 0 });
-        signer = await provider.getSigner();
-        gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer);
+        statusText.textContent = "Fee colculation...";
+        await switchToNetwork(net);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        const feeWei = await contract.getGmFeeInEth();
+        feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
+        statusText.textContent = "Fee calculated ✅";
       } catch (e) {
-        console.error("accountsChanged handler error", e);
+        console.error(e);
+        statusText.textContent = "Error in fee calculation";
+      }
+    });
+
+    sayGmBtn.addEventListener("click", async () => {
+      try {
+        sayGmBtn.disabled = true;
+        statusText.textContent = "Preparing transaction...";
+        await switchToNetwork(net);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        const feeWei = await contract.getGmFeeInEth();
+        const tx = await contract.sayGM({ value: feeWei });
+        txStatus.textContent = "Tx sent: " + tx.hash;
+        await tx.wait();
+        statusText.textContent = "GM completed successfully ☀️";
+        txStatus.textContent = "Confirmed: " + tx.hash;
+        const user = await contract.getUserSafe(await signer.getAddress());
+        streakText.textContent = user[0];
+        totalGmText.textContent = user[1];
+      } catch (e) {
+        console.error(e);
+        statusText.textContent = "Error in transaction";
+      } finally {
+        sayGmBtn.disabled = false;
+      }
+    });
+  }
+
+  async function updateAllStats() {
+    if (!signer) return;
+
+    for (const net of NETWORKS) {
+      const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
+      if (!container) continue;
+
+      const streakText = container.querySelector(".streak");
+      const totalGmText = container.querySelector(".totalGm");
+      const statusText = container.querySelector(".statusText");
+
+      try {
+        statusText.textContent = "Gathering stats...";
+        await switchToNetwork(net);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        const user = await contract.getUserSafe(await signer.getAddress());
+        streakText.textContent = user[0];
+        totalGmText.textContent = user[1];
+        statusText.textContent = "Stats gathered ✅";
+      } catch (e) {
+        console.error(`Error gathering stats for ${net.name}:`, e);
+        streakText.textContent = "—";
+        totalGmText.textContent = "—";
+        statusText.textContent = "Error gathering stats";
       }
     }
   }
 
-  function handleChainChanged(chainIdHex) {
-    // chainIdHex e.g. "0x14888"
-    try {
-      const parsed = parseInt(chainIdHex, 16);
-      currentChainId = parsed;
-      setChain(chainName(parsed));
-      setFee("—");
-      setTx("—");
-      // re-init provider+signer for new chain
-      provider = new ethers.BrowserProvider(window.ethereum, {
-        name: parsed === 84532 ? "base-sepolia" : (parsed === 8453 ? "base-mainnet" : "custom"),
-        chainId: parsed
-      });
-      provider.getSigner().then(s => { signer = s; gmContract = new ethers.Contract(GM_CONTRACT_ADDRESS, GM_ABI, signer); }).catch(()=>{});
-    } catch (e) {
-      console.error("handleChainChanged parse error", e);
-    }
-  }
 
-  // Fetch fee view (calls contract view function)
-  async function fetchFee() {
-    if (!gmContract) { setStatus("Brak kontraktu — połącz MetaMask"); return null; }
-    try {
-      setStatus("Pobieram opłatę z kontraktu...");
-      setTx("—");
-      const feeWei = await gmContract.getGmFeeInEth();
-      const feeEth = ethers.formatEther(feeWei);
-      setFee(feeEth);
-      setStatus("Opłata pobrana");
-      return feeWei;
-    } catch (e) {
-      console.error("fetchFee error", e);
-      setStatus("Błąd pobierania opłaty: " + (e?.message || e));
-      setFee("—");
-      return null;
-    }
-  }
-
-  // Send sayGM with value
-  async function sayGm() {
-    if (!gmContract) { setStatus("Brak kontraktu — połącz najpierw"); return; }
-    try {
-      await switchToBaseSepolia();
-      sayGmBtn.disabled = true;
-      fetchFeeBtn.disabled = true;
-      setStatus("Przygotowuję transakcję...");
-      const feeWei = await fetchFee();
-      if (!feeWei) throw new Error("Nie udało się pobrać fee");
-      setStatus(`Wysyłam tx (value ${ethers.formatEther(feeWei)} ETH)...`);
-      const tx = await gmContract.sayGM({ value: feeWei });
-      setTx("Wysłano: " + tx.hash);
-      setStatus("Czekam na potwierdzenie...");
-      await tx.wait();
-      setStatus("Say GM zakończone sukcesem ✅");
-      setTx("Potwierdzono: " + tx.hash);
-    } catch (e) {
-      console.error("sayGm error", e);
-      // pokaż możliwie czytelny komunikat
-      const msg = e?.reason || e?.data?.message || e?.message || String(e);
-      setStatus("Błąd wysyłki: " + msg);
-    } finally {
-      sayGmBtn.disabled = false;
-      fetchFeeBtn.disabled = false;
-    }
-  }
-
-  // button handlers
   connectBtn.addEventListener("click", connect);
   disconnectBtn.addEventListener("click", disconnect);
-  fetchFeeBtn.addEventListener("click", fetchFee);
-  sayGmBtn.addEventListener("click", sayGm);
-
-  // init: auto-check if already connected (without triggering ENS ops)
-  (async function initCheck() {
-    if (!window.ethereum) {
-      setStatus("MetaMask not found. Zainstaluj MetaMask.");
-      return;
-    }
-    try {
-      const accounts = await window.ethereum.request({ method: "eth_accounts" });
-      if (accounts && accounts.length > 0) {
-        // set minimal UI and allow manual connect to re-init provider safely
-        setStatus("MetaMask wykryty, konto połączone lokalnie. Kliknij 'Połącz MetaMask' by dApp zainicjował połączenie.");
-        accountText.textContent = accounts[0];
-        connectBtn.disabled = false;
-      } else {
-        setStatus("MetaMask wykryty, ale brak sesji. Kliknij 'Połącz MetaMask'.");
-      }
-    } catch (e) {
-      setStatus("Gotowy do połączenia z MetaMask");
-    }
-  })();
 
 })();
 </script>
