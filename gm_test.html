@@ -20,7 +20,7 @@
 </head>
 <body>
   <header>
-    <h1 style="margin:0">GM dApp — Base v.1.3.1</h1>
+    <h1 style="margin:0">GM dApp — Base v.1.3.2</h1>
     <div style="margin-left:auto">
       <button id="connectBtn">Połącz MetaMask</button>
       <button id="disconnectBtn" disabled>Rozłącz</button>
@@ -47,11 +47,24 @@
 <script>
 (() => {
   // === KONFIGURACJA: ustaw swój adres kontraktu poniżej ===
-  const GM_CONTRACT_ADDRESS = "0xYourContractAddressHere"; // <- ZAMIENIĆ!
+  const GM_CONTRACT_ADDRESS = "0xDe97573A58830D85dD3Ac58D76c8E8320De907c1"; // <- ZAMIENIĆ!
   const GM_ABI = [
     "function sayGM() external payable",
     "function getGmFeeInEth() view returns (uint256)"
   ];
+
+  const BASE_SEPOLIA_PARAMS = {
+    chainId: '0x14a34', // 84532 w hex
+    chainName: 'Base Sepolia',
+    nativeCurrency: {
+      name: 'ETH',
+      symbol: 'ETH',
+      decimals: 18
+    },
+    rpcUrls: ['https://base-sepolia.rpc.thirdweb.com'], // możesz użyć innego RPC
+    blockExplorerUrls: ['https://sepolia.basescan.org/']
+  };
+
 
   // UI refs
   const connectBtn = document.getElementById("connectBtn");
@@ -113,6 +126,28 @@
     setStatus("Błąd połączenia: " + (e.reason || e.message));
   }
 }
+
+  async function switchToBaseSepolia() {
+    if (!window.ethereum) throw new Error("MetaMask is not installed");
+
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: BASE_SEPOLIA_PARAMS.chainId }]
+      });
+    } catch (switchError) {
+      // Jeśli sieć nie istnieje w MetaMask, dodaj ją
+      if (switchError.code === 4902) {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [BASE_SEPOLIA_PARAMS]
+        });
+      } else {
+        throw switchError;
+      }
+    }
+  }
+
 
   function disconnect() {
     try {
@@ -197,6 +232,7 @@
   async function sayGm() {
     if (!gmContract) { setStatus("Brak kontraktu — połącz najpierw"); return; }
     try {
+      await switchToBaseSepolia();
       sayGmBtn.disabled = true;
       fetchFeeBtn.disabled = true;
       setStatus("Przygotowuję transakcję...");
