@@ -107,14 +107,55 @@
   // WalletConnect v2 connect (UMD)
   async function connectWalletConnect() {
     try {
-      const UMD = window.EthereumProvider || window.WalletConnectProvider || window.WalletConnect;
-      if (!UMD || typeof UMD.init !== 'function') {
-        alert('WalletConnect v2 library not loaded');
+      // Helper to locate UMD export under common global names or .default
+      const tryFind = () => {
+        const candidates = [
+          window.EthereumProvider,
+          window.WalletConnectProvider,
+          window.WalletConnect,
+          window.WalletConnectProvider && window.WalletConnectProvider.default,
+          window.WalletConnect && window.WalletConnect.default,
+          window.EthereumProvider && window.EthereumProvider.default
+        ];
+        for (const c of candidates) {
+          if (c && (typeof c.init === 'function' || typeof c === 'function')) return c;
+        }
+        return null;
+      };
+
+      let UMD = tryFind();
+
+      // If not found, try to dynamically load the UMD bundle from jsDelivr and retry
+      if (!UMD) {
+        console.log('WalletConnect UMD global not found — attempting to load script dynamically');
+        try {
+          await new Promise((resolve, reject) => {
+            const url = 'https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider/dist/umd/index.min.js';
+            if (document.querySelector(`script[src="${url}"]`)) return resolve();
+            const s = document.createElement('script');
+            s.src = url;
+            s.async = true;
+            s.onload = () => setTimeout(resolve, 50);
+            s.onerror = () => reject(new Error('Failed to load WalletConnect UMD: ' + url));
+            document.head.appendChild(s);
+          });
+        } catch (err) {
+          console.error('Failed to dynamically load WalletConnect UMD', err);
+        }
+
+        UMD = tryFind();
+      }
+
+      if (!UMD) {
+        console.error('WalletConnect v2 library not loaded - no UMD global detected');
+        alert('WalletConnect v2 library not loaded. Check that the UMD script is available.');
         return;
       }
 
       const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
-      wcProvider = await UMD.init({
+      const factory = (typeof UMD.init === 'function') ? UMD : (UMD.default || UMD);
+
+      wcProvider = await factory.init({
         projectId: PROJECT_ID,
         chains: [11155420, 11155111, 11155421],
         showQrModal: true,
