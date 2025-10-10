@@ -125,6 +125,19 @@
 
       let UMD = tryFind();
 
+      // If the UMD runtime is an ES module namespace (common when bundlers expose a default),
+      // prefer the `.default` export which usually holds the actual factory/constructor.
+      if (UMD && typeof UMD === 'object' && (UMD.__esModule || UMD.default)) {
+        try {
+          if (UMD.default) {
+            console.log('WalletConnect UMD runtime is an ES module namespace — switching to .default');
+            UMD = UMD.default;
+          }
+        } catch (e) {
+          console.warn('Error accessing UMD.default, keeping original UMD object', e);
+        }
+      }
+
       // If not found, try to dynamically load the UMD bundle from jsDelivr and retry
       if (!UMD) {
         console.log('WalletConnect UMD global not found — attempting to load script dynamically');
@@ -153,42 +166,8 @@
       }
 
       const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
-      // Detect init function across different UMD export shapes
-      let initFn = null;
-      if (typeof UMD.init === 'function') initFn = UMD.init.bind(UMD);
-      else if (UMD && UMD.default && typeof UMD.default.init === 'function') initFn = UMD.default.init.bind(UMD.default);
-      else if (UMD && UMD.EthereumProvider && typeof UMD.EthereumProvider.init === 'function') initFn = UMD.EthereumProvider.init.bind(UMD.EthereumProvider);
-      else if (UMD && UMD.WalletConnectProvider && typeof UMD.WalletConnectProvider.init === 'function') initFn = UMD.WalletConnectProvider.init.bind(UMD.WalletConnectProvider);
-      else if (typeof UMD === 'function' && typeof UMD.init === 'function') initFn = UMD.init.bind(UMD);
-
-      if (!initFn) {
-        console.error('No init() function found on WalletConnect UMD export. Available keys:', Object.keys(UMD || {}));
-        console.error('UMD value at runtime:', UMD);
-        // Check if the script tag is present and reachable
-        const scriptUrl = 'https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider/dist/umd/index.min.js';
-        const existing = document.querySelector(`script[src="${scriptUrl}"]`);
-        console.error('Script tag present?', !!existing, existing);
-        // Attempt an HTTP HEAD to the CDN URL to see status
-        try {
-          const res = await fetch(scriptUrl, { method: 'HEAD' });
-          console.error('CDN HEAD status for', scriptUrl, res.status);
-        } catch (fetchErr) {
-          console.error('CDN HEAD request failed', fetchErr);
-        }
-        // Log candidate global types for clarity
-        try {
-          console.error('Candidate globals types:', {
-            EthereumProvider: typeof window.EthereumProvider,
-            WalletConnectProvider: typeof window.WalletConnectProvider,
-            WalletConnect: typeof window.WalletConnect
-          });
-        } catch (t) { /* ignore */ }
-
-        alert('WalletConnect library loaded but no init() method found on the UMD export. See console for diagnostic details.');
-        return;
-      }
-
-      wcProvider = await initFn({
+      // Try several strategies to initialize the provider when init() isn't obvious
+      const options = {
         projectId: PROJECT_ID,
         chains: [11155420, 11155111, 11155421],
         showQrModal: true,
@@ -197,7 +176,99 @@
           11155111: "https://rpc.sepolia.org",
           11155421: "https://optimism-sepolia-public.nodies.app"
         }
-      });
+      };
+
+      let tried = [];
+
+      // 1) static init() on the object
+      try {
+        if (UMD && typeof UMD.init === 'function') {
+          console.log('Calling UMD.init()');
+          wcProvider = await UMD.init(options);
+        }
+      } catch (err) { tried.push(['UMD.init', err]); }
+
+      // 2) default.init()
+      if (!wcProvider && UMD && UMD.default) {
+        try {
+          if (typeof UMD.default.init === 'function') {
+            console.log('Calling UMD.default.init()');
+            wcProvider = await UMD.default.init(options);
+          }
+        } catch (err) { tried.push(['UMD.default.init', err]); }
+      }
+
+      // 3) constructor/class pattern: new UMD(options)
+      if (!wcProvider && typeof UMD === 'function') {
+        try {
+          console.log('Trying new UMD(options)');
+          const inst = new UMD(options);
+          // some builds return instance synchronously
+          if (inst) wcProvider = inst;
+        } catch (err) { tried.push(['new UMD()', err]); }
+      }
+
+      // 4) named nested providers (EthereumProvider / WalletConnectProvider)
+      if (!wcProvider && UMD && typeof UMD === 'object') {
+        const nestedCandidates = ['EthereumProvider', 'WalletConnectProvider', 'default'];
+        for (const key of nestedCandidates) {
+          const val = UMD[key];
+          if (!val) continue;
+          try {
+            if (typeof val.init === 'function') {
+              console.log(`Calling UMD["${key}"].init()`);
+              wcProvider = await val.init(options);
+              break;
+            }
+            if (typeof val === 'function') {
+              console.log(`Trying new UMD["${key}"](options)`);
+              const inst = new val(options);
+              if (inst) { wcProvider = inst; break; }
+            }
+          } catch (err) { tried.push([`UMD[${key}]`, err]); }
+        }
+      }
+
+      // 5) search for any function-like props that look like init/create
+      if (!wcProvider && UMD && typeof UMD === 'object') {
+        const names = Object.getOwnPropertyNames(UMD).concat(Object.getOwnPropertyNames(Object.getPrototypeOf(UMD) || {}));
+        for (const name of names) {
+          try {
+            const val = UMD[name];
+            if (typeof val === 'function' && /(init|create)/i.test(name)) {
+              console.log(`Calling UMD["${name}"]()`);
+              const maybe = await val.call(UMD, options);
+              if (maybe) { wcProvider = maybe; break; }
+            }
+          } catch (err) { tried.push([`UMD prop ${name}`, err]); }
+        }
+      }
+
+      if (!wcProvider) {
+        console.error('Unable to initialize WalletConnect provider. Attempts:', tried);
+        console.error('UMD runtime value:', UMD);
+        alert('WalletConnect library loaded but initialization failed — see console for details.');
+        return;
+      }
+      
+      // If previous attempts didn't work, try dynamic ESM import as a last resort
+      if (!wcProvider) {
+        try {
+          console.log('Attempting dynamic ESM import fallback for WalletConnect provider');
+          const mod = await import('https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider/dist/esm/index.min.js');
+          console.log('ESM module keys:', Object.keys(mod));
+          const factory2 = mod.EthereumProvider || mod.default || mod;
+          if (factory2 && typeof factory2.init === 'function') {
+            wcProvider = await factory2.init(options);
+          } else if (typeof factory2 === 'function') {
+            // try constructor or static init
+            if (typeof factory2.init === 'function') wcProvider = await factory2.init(options);
+            else wcProvider = new factory2(options);
+          }
+        } catch (impErr) {
+          console.error('ESM import fallback failed', impErr);
+        }
+      }
 
       if (typeof wcProvider.connect === 'function') await wcProvider.connect();
       const ethersProvider = new ethers.BrowserProvider(wcProvider);
