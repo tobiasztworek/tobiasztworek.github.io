@@ -91,15 +91,41 @@
   }
 
   async function connect() {
-    if (!window.ethereum) return alert("Install MetaMask.");
-    await window.ethereum.request({ method: "eth_requestAccounts" });
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    signer = await provider.getSigner();
-    connectBtn.disabled = true;
-    connectBtn.textContent = "Connected";
-    disconnectBtn.disabled = false;
-    NETWORKS.forEach(net => initNetworkContainer(net));
-    await updateAllStats();
+    try {
+      if (!window.ethereum) {
+        // No injected provider. On mobile, offer to open MetaMask's in-app browser via deep link.
+        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+        if (isMobile) {
+          const dappUrl = encodeURIComponent(window.location.href);
+          const metamaskLink = `https://metamask.app.link/dapp/${dappUrl}`;
+          // Inform the user and redirect them into MetaMask's internal browser where provider is injected
+          if (confirm('MetaMask nie jest dostępny w tej przeglądarce. Otworzyć stronę w aplikacji MetaMask?')) {
+            window.location.href = metamaskLink;
+          }
+          return;
+        }
+
+        alert('No Ethereum provider found. Zainstaluj MetaMask lub użyj WalletConnect.');
+        return;
+      }
+
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Connected';
+      disconnectBtn.disabled = false;
+      NETWORKS.forEach(net => initNetworkContainer(net));
+      await updateAllStats();
+    } catch (err) {
+      console.error('connect() error:', err);
+      // Provide more actionable message for mobile deep-linking issues
+      if (err && err.message && /No provider|user rejected|invalid json rpc response/i.test(err.message)) {
+        alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile) lub użyj WalletConnect.');
+      } else {
+        alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
+      }
+    }
   }
 
   function disconnect() {
