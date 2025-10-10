@@ -2,7 +2,7 @@
   const NETWORKS = [
     {
       name: "Base Sepolia",
-      chainId: "0x14a34",
+      chainId: "0xaa37dc",
       contractAddress: "0x714Be7D3D4fB4D52c714b00afFd1F297FD0E023f",
       rpcUrl: "https://base-sepolia.rpc.thirdweb.com",
       explorer: "https://sepolia.basescan.org/",
@@ -20,7 +20,7 @@
     },
     {
       name: "Optimism Sepolia",
-      chainId: "0xaa37dc",
+      chainId: "0xaa37dd",
       contractAddress: "0x0a56E2E236547575b2db6EF7e872cd49bC91A556",
       rpcUrl: "https://optimism-sepolia-public.nodies.app",
       explorer: "https://testnet-explorer.optimism.io/",
@@ -93,16 +93,20 @@
   async function connect() {
     try {
       if (!window.ethereum) {
-        // No injected provider. On mobile, offer to open MetaMask's in-app browser via deep link.
+        // No injected provider. On mobile, try waiting briefly (injection can be delayed), otherwise offer deep-link to MetaMask app browser.
         const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
         if (isMobile) {
-          const dappUrl = encodeURIComponent(window.location.href);
-          const metamaskLink = `https://metamask.app.link/dapp/${dappUrl}`;
-          // Inform the user and redirect them into MetaMask's internal browser where provider is injected
-          if (confirm('MetaMask nie jest dostępny w tej przeglądarce. Otworzyć stronę w aplikacji MetaMask?')) {
-            window.location.href = metamaskLink;
+          // Wait a short time for provider injection (some browsers / in-app flows inject slightly delayed)
+          const injected = await waitForEthereum(3000);
+          if (!injected) {
+            const dappUrl = encodeURIComponent(window.location.href);
+            const metamaskLink = `https://metamask.app.link/dapp/${dappUrl}`;
+            // Inform the user and redirect them into MetaMask's internal browser where provider is injected
+            if (confirm('MetaMask nie jest dostępny w tej przeglądarce. Otworzyć stronę w aplikacji MetaMask?')) {
+              window.location.href = metamaskLink;
+            }
+            return;
           }
-          return;
         }
 
         alert('No Ethereum provider found. Zainstaluj MetaMask lub użyj WalletConnect.');
@@ -126,6 +130,26 @@
         alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
       }
     }
+  }
+
+  // Utility: wait for window.ethereum to appear (polling). Returns true if found within timeoutMs.
+  function waitForEthereum(timeoutMs = 3000) {
+    return new Promise(resolve => {
+      if (window.ethereum) return resolve(true);
+      const interval = 200;
+      let waited = 0;
+      const id = setInterval(() => {
+        if (window.ethereum) {
+          clearInterval(id);
+          return resolve(true);
+        }
+        waited += interval;
+        if (waited >= timeoutMs) {
+          clearInterval(id);
+          return resolve(false);
+        }
+      }, interval);
+    });
   }
 
   function disconnect() {
@@ -319,5 +343,27 @@
   connectBtn.addEventListener("click", connect);
   connectWcBtn.addEventListener("click", connectWalletConnect);
   disconnectBtn.addEventListener("click", disconnect);
+
+  // EIP-1193 provider event handlers to keep UI in sync and aid debugging
+  if (window.ethereum) {
+    window.ethereum.on?.('accountsChanged', (accounts) => {
+      console.log('accountsChanged', accounts);
+      if (!accounts || accounts.length === 0) {
+        disconnect();
+      }
+    });
+
+    window.ethereum.on?.('chainChanged', (chainId) => {
+      console.log('chainChanged', chainId);
+      // Refresh UI to reflect chain change
+      networksRow.innerHTML = "";
+      if (signer) NETWORKS.forEach(net => initNetworkContainer(net));
+    });
+
+    window.ethereum.on?.('disconnect', (error) => {
+      console.log('provider disconnect', error);
+      disconnect();
+    });
+  }
 
 })();
