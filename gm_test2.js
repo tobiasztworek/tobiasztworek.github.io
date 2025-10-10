@@ -42,6 +42,44 @@
 
   let signer;
   let wcProvider = null;
+  
+  async function connect() {
+    try {
+      if (!window.ethereum) {
+        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+        if (isMobile) {
+          const injected = await waitForEthereum(3000);
+          if (!injected) {
+            const dappUrl = encodeURIComponent(window.location.href);
+            const metamaskLink = `https://metamask.app.link/dapp/${dappUrl}`;
+            if (confirm('MetaMask nie jest dostępny w tej przeglądarce. Otworzyć stronę w aplikacji MetaMask?')) {
+              window.location.href = metamaskLink;
+            }
+            return;
+          }
+        }
+
+        alert('No Ethereum provider found. Zainstaluj MetaMask.');
+        return;
+      }
+
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Connected';
+      disconnectBtn.disabled = false;
+      NETWORKS.forEach(net => initNetworkContainer(net, false));
+      await updateAllStats(false);
+    } catch (err) {
+      console.error('connect() error:', err);
+      if (err && err.message && /No provider|user rejected|invalid json rpc response/i.test(err.message)) {
+        alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile).');
+      } else {
+        alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
+      }
+    }
+  }
   // Web3Modal-based connect flow (replaces manual WalletConnect init)
   async function connectWalletConnect() {
     try {
