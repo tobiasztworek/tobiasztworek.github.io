@@ -107,6 +107,31 @@
   // WalletConnect v2 connect (UMD)
   async function connectWalletConnect() {
     try {
+      // Preflight: check registry and relay connectivity to provide clearer diagnostics
+      async function checkRegistry(url) {
+        try {
+          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+          return { ok: true, status: res.status };
+        } catch (e) {
+          return { ok: false, error: e };
+        }
+      }
+
+      async function testWebSocket(wsUrl, timeoutMs = 3000) {
+        return new Promise(resolve => {
+          let done = false;
+          try {
+            const ws = new WebSocket(wsUrl);
+            const timer = setTimeout(() => {
+              if (!done) { done = true; try { ws.close(); } catch (e) {} resolve({ ok: false, reason: 'timeout' }); }
+            }, timeoutMs);
+            ws.onopen = () => { if (!done) { done = true; clearTimeout(timer); try { ws.close(); } catch (e) {} resolve({ ok: true }); } };
+            ws.onerror = (err) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: false, reason: 'ws-error', error: err }); } };
+          } catch (e) {
+            resolve({ ok: false, error: e });
+          }
+        });
+      }
       // Helper to locate UMD export under common global names or .default
       const tryFind = () => {
         const candidates = [
@@ -123,7 +148,7 @@
         return null;
       };
 
-      let UMD = tryFind();
+  let UMD = tryFind();
 
       // If the UMD runtime is an ES module namespace (common when bundlers expose a default),
       // prefer the `.default` export which usually holds the actual factory/constructor.
@@ -163,6 +188,28 @@
         console.error('WalletConnect v2 library not loaded - no UMD global detected');
         alert('WalletConnect v2 library not loaded. Check that the UMD script is available.');
         return;
+      }
+
+      // Quick connectivity checks (registry + relay) to avoid confusing internal errors
+      try {
+        const registryUrl = 'https://registry.walletconnect.com/api/v2/wallets';
+        const reg = await checkRegistry(registryUrl);
+        if (!reg.ok || (reg.status && reg.status >= 400)) {
+          console.warn('WalletConnect registry check failed', reg);
+          // try the relay directly as a fallback connectivity probe
+          const wsProbe = await testWebSocket('wss://relay.walletconnect.com');
+          if (!wsProbe.ok) {
+            console.error('Relay websocket probe failed', wsProbe);
+            alert('Unable to reach WalletConnect services (registry/relay). Check network or add a valid Project ID. See console for details.');
+            return;
+          } else {
+            console.log('Relay websocket probe OK (registry failed) — proceeding, but registry responded with', reg);
+          }
+        } else {
+          console.log('WalletConnect registry reachable (status ' + reg.status + ')');
+        }
+      } catch (probeErr) {
+        console.warn('Connectivity preflight for WalletConnect failed', probeErr);
       }
 
       const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
