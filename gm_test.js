@@ -47,16 +47,44 @@
   let wcSigner;
   async function connectWalletConnect() {
     try {
-      wcProvider = new WalletConnectProvider.default({
-        rpc: {
-          11155420: "https://base-sepolia.rpc.thirdweb.com", // Base Sepolia
-          11155111: "https://rpc.sepolia.org", // Ethereum Sepolia
-          11155421: "https://optimism-sepolia-public.nodies.app" // Optimism Sepolia
-        }
-      });
-      await wcProvider.enable();
-      const ethersProvider = new ethers.BrowserProvider(wcProvider);
-      wcSigner = await ethersProvider.getSigner();
+      // Try WalletConnect v2 (UMD global: WalletConnectProvider)
+      if (window.WalletConnectProvider?.init) {
+        // NOTE: replace PROJECT_ID with your actual WalletConnect Cloud Project ID
+        const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c';
+        wcProvider = await window.WalletConnectProvider.init({
+          projectId: PROJECT_ID,
+          chains: [11155420, 11155111, 11155421],
+          showQrModal: true,
+          rpcMap: {
+            11155420: "https://base-sepolia.rpc.thirdweb.com",
+            11155111: "https://rpc.sepolia.org",
+            11155421: "https://optimism-sepolia-public.nodies.app"
+          }
+        });
+
+        // connect() will open modal / deep link on mobile
+        await wcProvider.connect();
+
+        // wcProvider should be an EIP-1193 provider
+        const ethersProvider = new ethers.BrowserProvider(wcProvider);
+        wcSigner = await ethersProvider.getSigner();
+
+      } else if (window.WalletConnectProvider) {
+        // Fallback for older UMD v1: keep compatibility
+        wcProvider = new WalletConnectProvider.default({
+          rpc: {
+            11155420: "https://base-sepolia.rpc.thirdweb.com",
+            11155111: "https://rpc.sepolia.org",
+            11155421: "https://optimism-sepolia-public.nodies.app"
+          }
+        });
+        await wcProvider.enable();
+        const ethersProvider = new ethers.BrowserProvider(wcProvider);
+        wcSigner = await ethersProvider.getSigner();
+      } else {
+        throw new Error('Brak dostępnej biblioteki WalletConnect (v2/v1)');
+      }
+
       connectWcBtn.disabled = true;
       connectWcBtn.textContent = "Connected (WC)";
       disconnectBtn.disabled = false;
@@ -64,7 +92,7 @@
       await updateAllStats(true);
     } catch (err) {
       console.error("WalletConnect error:", err);
-      alert("WalletConnect connection failed");
+      alert("WalletConnect connection failed: " + (err.message || err));
     }
   }
 
