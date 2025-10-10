@@ -36,65 +36,11 @@
   ];
 
   const connectBtn = document.getElementById("connectBtn");
-  const connectWcBtn = document.getElementById("connectWcBtn");
+  // WalletConnect removed; only MetaMask supported now
   const disconnectBtn = document.getElementById("disconnectBtn");
   const networksRow = document.getElementById("networksRow");
 
-  // WalletConnectProvider setup
-  let wcProvider;
-
   let signer;
-  let wcSigner;
-  async function connectWalletConnect() {
-    try {
-      // Try WalletConnect v2 (UMD global: WalletConnectProvider)
-      if (window.WalletConnectProvider?.init) {
-        // NOTE: replace PROJECT_ID with your actual WalletConnect Cloud Project ID
-        const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c';
-        wcProvider = await window.WalletConnectProvider.init({
-          projectId: PROJECT_ID,
-          chains: [11155420, 11155111, 11155421],
-          showQrModal: true,
-          rpcMap: {
-            11155420: "https://base-sepolia.rpc.thirdweb.com",
-            11155111: "https://rpc.sepolia.org",
-            11155421: "https://optimism-sepolia-public.nodies.app"
-          }
-        });
-
-        // connect() will open modal / deep link on mobile
-        await wcProvider.connect();
-
-        // wcProvider should be an EIP-1193 provider
-        const ethersProvider = new ethers.BrowserProvider(wcProvider);
-        wcSigner = await ethersProvider.getSigner();
-
-      } else if (window.WalletConnectProvider) {
-        // Fallback for older UMD v1: keep compatibility
-        wcProvider = new WalletConnectProvider.default({
-          rpc: {
-            11155420: "https://base-sepolia.rpc.thirdweb.com",
-            11155111: "https://rpc.sepolia.org",
-            11155421: "https://optimism-sepolia-public.nodies.app"
-          }
-        });
-        await wcProvider.enable();
-        const ethersProvider = new ethers.BrowserProvider(wcProvider);
-        wcSigner = await ethersProvider.getSigner();
-      } else {
-        throw new Error('Brak dostępnej biblioteki WalletConnect (v2/v1)');
-      }
-
-      connectWcBtn.disabled = true;
-      connectWcBtn.textContent = "Connected (WC)";
-      disconnectBtn.disabled = false;
-      NETWORKS.forEach(net => initNetworkContainer(net, true));
-      await updateAllStats(true);
-    } catch (err) {
-      console.error("WalletConnect error:", err);
-      alert("WalletConnect connection failed: " + (err.message || err));
-    }
-  }
 
   async function switchToNetwork(net) {
     try {
@@ -137,7 +83,7 @@
           }
         }
 
-        alert('No Ethereum provider found. Zainstaluj MetaMask lub użyj WalletConnect.');
+  alert('No Ethereum provider found. Zainstaluj MetaMask.');
         return;
       }
 
@@ -153,7 +99,7 @@
       console.error('connect() error:', err);
       // Provide more actionable message for mobile deep-linking issues
       if (err && err.message && /No provider|user rejected|invalid json rpc response/i.test(err.message)) {
-        alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile) lub użyj WalletConnect.');
+  alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile).');
       } else {
         alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
       }
@@ -182,16 +128,13 @@
 
   function disconnect() {
   signer = null;
-  wcSigner = null;
   networksRow.innerHTML = "";
   connectBtn.disabled = false;
-  connectWcBtn.disabled = false;
   connectBtn.textContent = "Connect MetaMask";
-  connectWcBtn.textContent = "WalletConnect";
   disconnectBtn.disabled = true;
   }
 
-  function initNetworkContainer(net, useWalletConnect = false) {
+  function initNetworkContainer(net) {
     const col = document.createElement("div");
     col.className = "col-12 col-md-6";
 
@@ -221,9 +164,6 @@
       </div>
       <div class="txStatus">—</div>
     `;
-    col.appendChild(container);
-    networksRow.appendChild(col);
-
     const fetchFeeBtn = container.querySelector(".fetchFeeBtn");
     const sayGmBtn = container.querySelector(".sayGmBtn");
     const statusText = container.querySelector(".statusText");
@@ -250,14 +190,10 @@
     fetchFeeBtn.addEventListener("click", async () => {
       try {
         statusText.textContent = "Fee colculation...";
-        if (useWalletConnect && wcSigner) {
-          contract = new ethers.Contract(net.contractAddress, GM_ABI, wcSigner);
-        } else {
-          await switchToNetwork(net);
-          const provider = new ethers.BrowserProvider(window.ethereum);
-          const signer = await provider.getSigner();
-          contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        }
+        await switchToNetwork(net);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const feeWei = await contract.getGmFeeInEth();
         feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
         statusText.textContent = "Fee calculated ✅";
@@ -271,21 +207,17 @@
       try {
         sayGmBtn.disabled = true;
         statusText.textContent = "Preparing transaction...";
-        if (useWalletConnect && wcSigner) {
-          contract = new ethers.Contract(net.contractAddress, GM_ABI, wcSigner);
-        } else {
-          await switchToNetwork(net);
-          const provider = new ethers.BrowserProvider(window.ethereum);
-          const signer = await provider.getSigner();
-          contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        }
+        await switchToNetwork(net);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const feeWei = await contract.getGmFeeInEth();
         const tx = await contract.sayGM({ value: feeWei });
         txStatus.textContent = "Tx sent: " + tx.hash;
         await tx.wait();
         statusText.textContent = "GM completed successfully ☀️";
         txStatus.textContent = "Confirmed: " + tx.hash;
-        const user = await contract.getUserSafe((useWalletConnect && wcSigner) ? await wcSigner.getAddress() : await signer.getAddress());
+  const user = await contract.getUserSafe(await signer.getAddress());
         streakText.textContent = user[0];
         totalGmText.textContent = user[1];
       } catch (e) {
@@ -297,8 +229,8 @@
     });
   }
 
-  async function updateAllStats(useWalletConnect = false) {
-    if (!signer && !wcSigner) return;
+  async function updateAllStats() {
+    if (!signer) return;
 
     for (const net of NETWORKS) {
       const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
@@ -309,18 +241,12 @@
       const statusText = container.querySelector(".statusText");
 
       try {
-        statusText.textContent = "Gathering stats...";
-        let contract, address;
-        if (useWalletConnect && wcSigner) {
-          contract = new ethers.Contract(net.contractAddress, GM_ABI, wcSigner);
-          address = await wcSigner.getAddress();
-        } else {
-          await switchToNetwork(net);
-          const provider = new ethers.BrowserProvider(window.ethereum);
-          const signer = await provider.getSigner();
-          contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-          address = await signer.getAddress();
-        }
+  statusText.textContent = "Gathering stats...";
+  await switchToNetwork(net);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        const address = await signer.getAddress();
         const user = await contract.getUserSafe(address);
         streakText.textContent = user[0];
         totalGmText.textContent = user[1];
@@ -369,7 +295,6 @@
 
 
   connectBtn.addEventListener("click", connect);
-  connectWcBtn.addEventListener("click", connectWalletConnect);
   disconnectBtn.addEventListener("click", disconnect);
 
   // EIP-1193 provider event handlers to keep UI in sync and aid debugging
