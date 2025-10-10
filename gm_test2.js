@@ -36,10 +36,13 @@
   ];
 
   const connectBtn = document.getElementById("connectBtn");
+  const connectWcBtn = document.getElementById("connectWcBtn");
   const disconnectBtn = document.getElementById("disconnectBtn");
   const networksRow = document.getElementById("networksRow");
 
   let signer;
+  let wcProvider = null;
+  let wcSigner = null;
 
   async function switchToNetwork(net) {
     try {
@@ -89,8 +92,8 @@
       connectBtn.disabled = true;
       connectBtn.textContent = 'Connected';
       disconnectBtn.disabled = false;
-      NETWORKS.forEach(net => initNetworkContainer(net));
-      await updateAllStats();
+      NETWORKS.forEach(net => initNetworkContainer(net, false));
+      await updateAllStats(false);
     } catch (err) {
       console.error('connect() error:', err);
       if (err && err.message && /No provider|user rejected|invalid json rpc response/i.test(err.message)) {
@@ -98,6 +101,42 @@
       } else {
         alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
       }
+    }
+  }
+
+  // WalletConnect v2 connect (UMD)
+  async function connectWalletConnect() {
+    try {
+      const UMD = window.EthereumProvider || window.WalletConnectProvider || window.WalletConnect;
+      if (!UMD || typeof UMD.init !== 'function') {
+        alert('WalletConnect v2 library not loaded');
+        return;
+      }
+
+      const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
+      wcProvider = await UMD.init({
+        projectId: PROJECT_ID,
+        chains: [11155420, 11155111, 11155421],
+        showQrModal: true,
+        rpcMap: {
+          11155420: "https://base-sepolia.rpc.thirdweb.com",
+          11155111: "https://rpc.sepolia.org",
+          11155421: "https://optimism-sepolia-public.nodies.app"
+        }
+      });
+
+      if (typeof wcProvider.connect === 'function') await wcProvider.connect();
+      const ethersProvider = new ethers.BrowserProvider(wcProvider);
+      wcSigner = await ethersProvider.getSigner();
+
+      connectWcBtn.disabled = true;
+      connectWcBtn.textContent = 'Connected (WC)';
+      disconnectBtn.disabled = false;
+      NETWORKS.forEach(net => initNetworkContainer(net, true));
+      await updateAllStats(true);
+    } catch (e) {
+      console.error('WalletConnect v2 error', e);
+      alert('WalletConnect connection failed: ' + (e && e.message ? e.message : e));
     }
   }
 
@@ -120,15 +159,27 @@
     });
   }
 
-  function disconnect() {
+  async function disconnect() {
     signer = null;
     networksRow.innerHTML = "";
     connectBtn.disabled = false;
     connectBtn.textContent = "Connect MetaMask";
+    if (connectWcBtn) { connectWcBtn.disabled = false; connectWcBtn.textContent = 'WalletConnect'; }
+    // Close WalletConnect session if present
+    if (wcProvider) {
+      try {
+        if (typeof wcProvider.disconnect === 'function') await wcProvider.disconnect();
+        else if (typeof wcProvider.close === 'function') await wcProvider.close();
+      } catch (e) {
+        console.warn('Error closing WC provider', e);
+      }
+      wcProvider = null;
+      wcSigner = null;
+    }
     disconnectBtn.disabled = true;
   }
 
-  function initNetworkContainer(net) {
+  function initNetworkContainer(net, useWalletConnect = false) {
     const col = document.createElement("div");
     col.className = "col-12 col-md-6";
 
@@ -187,10 +238,14 @@
     fetchFeeBtn.addEventListener("click", async () => {
       try {
         statusText.textContent = "Fee colculation...";
-        await switchToNetwork(net);
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        if (useWalletConnect && wcSigner) {
+          contract = new ethers.Contract(net.contractAddress, GM_ABI, wcSigner);
+        } else {
+          await switchToNetwork(net);
+          const provider = new ethers.BrowserProvider(window.ethereum);
+          const signer = await provider.getSigner();
+          contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        }
         const feeWei = await contract.getGmFeeInEth();
         feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
         statusText.textContent = "Fee calculated ✅";
@@ -204,19 +259,23 @@
       try {
         sayGmBtn.disabled = true;
         statusText.textContent = "Preparing transaction...";
-        await switchToNetwork(net);
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        if (useWalletConnect && wcSigner) {
+          contract = new ethers.Contract(net.contractAddress, GM_ABI, wcSigner);
+        } else {
+          await switchToNetwork(net);
+          const provider = new ethers.BrowserProvider(window.ethereum);
+          const signer = await provider.getSigner();
+          contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+        }
         const feeWei = await contract.getGmFeeInEth();
         const tx = await contract.sayGM({ value: feeWei });
         txStatus.textContent = "Tx sent: " + tx.hash;
         await tx.wait();
         statusText.textContent = "GM completed successfully ☀️";
         txStatus.textContent = "Confirmed: " + tx.hash;
-        const user = await contract.getUserSafe(await signer.getAddress());
-        streakText.textContent = user[0];
-        totalGmText.textContent = user[1];
+  const user = await contract.getUserSafe(await contract.signer.getAddress());
+  streakText.textContent = user[0];
+  totalGmText.textContent = user[1];
       } catch (e) {
         console.error(e);
         statusText.textContent = "Error in transaction";
@@ -226,8 +285,8 @@
     });
   }
 
-  async function updateAllStats() {
-    if (!signer) return;
+  async function updateAllStats(useWalletConnect = false) {
+    if (!signer && !wcSigner) return;
 
     for (const net of NETWORKS) {
       const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
@@ -239,11 +298,18 @@
 
       try {
         statusText.textContent = "Gathering stats...";
-        await switchToNetwork(net);
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        const user = await contract.getUserSafe(await signer.getAddress());
+        let contract, address;
+        if (useWalletConnect && wcSigner) {
+          contract = new ethers.Contract(net.contractAddress, GM_ABI, wcSigner);
+          address = await wcSigner.getAddress();
+        } else {
+          await switchToNetwork(net);
+          const provider = new ethers.BrowserProvider(window.ethereum);
+          const signer = await provider.getSigner();
+          contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
+          address = await signer.getAddress();
+        }
+        const user = await contract.getUserSafe(address);
         streakText.textContent = user[0];
         totalGmText.textContent = user[1];
         statusText.textContent = "Stats gathered ✅";
@@ -292,6 +358,7 @@
 
   connectBtn.addEventListener("click", connect);
   disconnectBtn.addEventListener("click", disconnect);
+  if (connectWcBtn) connectWcBtn.addEventListener('click', connectWalletConnect);
 
   // EIP-1193 provider event handlers to keep UI in sync and aid debugging
   if (window.ethereum) {
