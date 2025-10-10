@@ -36,7 +36,6 @@
   ];
 
   const connectBtn = document.getElementById("connectBtn");
-  // WalletConnect removed; only MetaMask supported now
   const disconnectBtn = document.getElementById("disconnectBtn");
   const networksRow = document.getElementById("networksRow");
 
@@ -67,15 +66,12 @@
   async function connect() {
     try {
       if (!window.ethereum) {
-        // No injected provider. On mobile, try waiting briefly (injection can be delayed), otherwise offer deep-link to MetaMask app browser.
         const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
         if (isMobile) {
-          // Wait a short time for provider injection (some browsers / in-app flows inject slightly delayed)
           const injected = await waitForEthereum(3000);
           if (!injected) {
             const dappUrl = encodeURIComponent(window.location.href);
             const metamaskLink = `https://metamask.app.link/dapp/${dappUrl}`;
-            // Inform the user and redirect them into MetaMask's internal browser where provider is injected
             if (confirm('MetaMask nie jest dostępny w tej przeglądarce. Otworzyć stronę w aplikacji MetaMask?')) {
               window.location.href = metamaskLink;
             }
@@ -83,7 +79,7 @@
           }
         }
 
-  alert('No Ethereum provider found. Zainstaluj MetaMask.');
+        alert('No Ethereum provider found. Zainstaluj MetaMask.');
         return;
       }
 
@@ -97,16 +93,14 @@
       await updateAllStats();
     } catch (err) {
       console.error('connect() error:', err);
-      // Provide more actionable message for mobile deep-linking issues
       if (err && err.message && /No provider|user rejected|invalid json rpc response/i.test(err.message)) {
-  alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile).');
+        alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile).');
       } else {
         alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
       }
     }
   }
 
-  // Utility: wait for window.ethereum to appear (polling). Returns true if found within timeoutMs.
   function waitForEthereum(timeoutMs = 3000) {
     return new Promise(resolve => {
       if (window.ethereum) return resolve(true);
@@ -127,11 +121,11 @@
   }
 
   function disconnect() {
-  signer = null;
-  networksRow.innerHTML = "";
-  connectBtn.disabled = false;
-  connectBtn.textContent = "Connect MetaMask";
-  disconnectBtn.disabled = true;
+    signer = null;
+    networksRow.innerHTML = "";
+    connectBtn.disabled = false;
+    connectBtn.textContent = "Connect MetaMask";
+    disconnectBtn.disabled = true;
   }
 
   function initNetworkContainer(net) {
@@ -164,6 +158,9 @@
       </div>
       <div class="txStatus">—</div>
     `;
+    col.appendChild(container);
+    networksRow.appendChild(col);
+
     const fetchFeeBtn = container.querySelector(".fetchFeeBtn");
     const sayGmBtn = container.querySelector(".sayGmBtn");
     const statusText = container.querySelector(".statusText");
@@ -217,7 +214,7 @@
         await tx.wait();
         statusText.textContent = "GM completed successfully ☀️";
         txStatus.textContent = "Confirmed: " + tx.hash;
-  const user = await contract.getUserSafe(await signer.getAddress());
+        const user = await contract.getUserSafe(await signer.getAddress());
         streakText.textContent = user[0];
         totalGmText.textContent = user[1];
       } catch (e) {
@@ -241,13 +238,12 @@
       const statusText = container.querySelector(".statusText");
 
       try {
-  statusText.textContent = "Gathering stats...";
-  await switchToNetwork(net);
+        statusText.textContent = "Gathering stats...";
+        await switchToNetwork(net);
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        const address = await signer.getAddress();
-        const user = await contract.getUserSafe(address);
+        const user = await contract.getUserSafe(await signer.getAddress());
         streakText.textContent = user[0];
         totalGmText.textContent = user[1];
         statusText.textContent = "Stats gathered ✅";
