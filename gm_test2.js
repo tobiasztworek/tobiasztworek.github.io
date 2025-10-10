@@ -163,7 +163,28 @@
 
       if (!initFn) {
         console.error('No init() function found on WalletConnect UMD export. Available keys:', Object.keys(UMD || {}));
-        alert('WalletConnect library loaded but no init() method found on the UMD export. Check console for details.');
+        console.error('UMD value at runtime:', UMD);
+        // Check if the script tag is present and reachable
+        const scriptUrl = 'https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider/dist/umd/index.min.js';
+        const existing = document.querySelector(`script[src="${scriptUrl}"]`);
+        console.error('Script tag present?', !!existing, existing);
+        // Attempt an HTTP HEAD to the CDN URL to see status
+        try {
+          const res = await fetch(scriptUrl, { method: 'HEAD' });
+          console.error('CDN HEAD status for', scriptUrl, res.status);
+        } catch (fetchErr) {
+          console.error('CDN HEAD request failed', fetchErr);
+        }
+        // Log candidate global types for clarity
+        try {
+          console.error('Candidate globals types:', {
+            EthereumProvider: typeof window.EthereumProvider,
+            WalletConnectProvider: typeof window.WalletConnectProvider,
+            WalletConnect: typeof window.WalletConnect
+          });
+        } catch (t) { /* ignore */ }
+
+        alert('WalletConnect library loaded but no init() method found on the UMD export. See console for diagnostic details.');
         return;
       }
 
