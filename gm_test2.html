@@ -14,7 +14,9 @@
 <!-- Web3Modal provides an ES module build at dist/index.es.js. Load it as a module and
      attach its default export to window.Web3Modal so existing non-module code can use it. -->
 <script type="module">
-  import * as Web3ModalModule from 'https://cdn.jsdelivr.net/npm/@web3modal/standalone@2.4.3/dist/index.es.js';
+  // Use esm.sh to provide a browser-ready ESM bundle where bare imports are rewritten
+  // so the browser can resolve `@web3modal/core` and other dependencies at runtime.
+  import * as Web3ModalModule from 'https://esm.sh/@web3modal/standalone@2.4.3';
   // Attach a compatible global so gm_test2.js which expects `window.Web3Modal.default` works
   window.Web3Modal = window.Web3Modal || {};
   // Some builds export the class as default, some as named exports — normalize both.
@@ -26,7 +28,7 @@
 <body>
 
 <header class="d-flex align-items-center justify-content-between">
-  <h1>🌅 GM dApp Multi-Chain v.1.5.12</h1>
+  <h1>🌅 GM dApp Multi-Chain v.1.5.13</h1>
   <div>
   <button id="connectBtn" class="btn btn-light me-2">Connect MetaMask</button>
   <button id="connectWcBtn" class="btn btn-info me-2">WalletConnect</button>
