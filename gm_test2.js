@@ -153,9 +153,21 @@
       }
 
       const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
-      const factory = (typeof UMD.init === 'function') ? UMD : (UMD.default || UMD);
+      // Detect init function across different UMD export shapes
+      let initFn = null;
+      if (typeof UMD.init === 'function') initFn = UMD.init.bind(UMD);
+      else if (UMD && UMD.default && typeof UMD.default.init === 'function') initFn = UMD.default.init.bind(UMD.default);
+      else if (UMD && UMD.EthereumProvider && typeof UMD.EthereumProvider.init === 'function') initFn = UMD.EthereumProvider.init.bind(UMD.EthereumProvider);
+      else if (UMD && UMD.WalletConnectProvider && typeof UMD.WalletConnectProvider.init === 'function') initFn = UMD.WalletConnectProvider.init.bind(UMD.WalletConnectProvider);
+      else if (typeof UMD === 'function' && typeof UMD.init === 'function') initFn = UMD.init.bind(UMD);
 
-      wcProvider = await factory.init({
+      if (!initFn) {
+        console.error('No init() function found on WalletConnect UMD export. Available keys:', Object.keys(UMD || {}));
+        alert('WalletConnect library loaded but no init() method found on the UMD export. Check console for details.');
+        return;
+      }
+
+      wcProvider = await initFn({
         projectId: PROJECT_ID,
         chains: [11155420, 11155111, 11155421],
         showQrModal: true,
