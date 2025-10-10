@@ -42,374 +42,42 @@
 
   let signer;
   let wcProvider = null;
-  let wcSigner = null;
-
-  async function switchToNetwork(net) {
-    try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: net.chainId }]
-      });
-    } catch (err) {
-      if (err.code === 4902) {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{
-            chainId: net.chainId,
-            chainName: net.name,
-            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-            rpcUrls: [net.rpcUrl],
-            blockExplorerUrls: [net.explorer]
-          }]
-        });
-      } else throw err;
-    }
-  }
-
-  async function connect() {
-    try {
-      if (!window.ethereum) {
-        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-        if (isMobile) {
-          const injected = await waitForEthereum(3000);
-          if (!injected) {
-            const dappUrl = encodeURIComponent(window.location.href);
-            const metamaskLink = `https://metamask.app.link/dapp/${dappUrl}`;
-            if (confirm('MetaMask nie jest dostępny w tej przeglądarce. Otworzyć stronę w aplikacji MetaMask?')) {
-              window.location.href = metamaskLink;
-            }
-            return;
-          }
-        }
-
-        alert('No Ethereum provider found. Zainstaluj MetaMask.');
-        return;
-      }
-
-      await window.ethereum.request({ method: 'eth_requestAccounts' });
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
-      connectBtn.disabled = true;
-      connectBtn.textContent = 'Connected';
-      disconnectBtn.disabled = false;
-      NETWORKS.forEach(net => initNetworkContainer(net, false));
-      await updateAllStats(false);
-    } catch (err) {
-      console.error('connect() error:', err);
-      if (err && err.message && /No provider|user rejected|invalid json rpc response/i.test(err.message)) {
-        alert('Błąd połączenia z MetaMask. Spróbuj otworzyć stronę w przeglądarce MetaMask (mobile).');
-      } else {
-        alert('Błąd połączenia z portfelem: ' + (err && err.message ? err.message : err));
-      }
-    }
-  }
-
-  // WalletConnect v2 connect (UMD)
+  // Web3Modal-based connect flow (replaces manual WalletConnect init)
   async function connectWalletConnect() {
     try {
-      // Preflight: check registry and relay connectivity to provide clearer diagnostics
-      // Resilient registry checker: try a list of known endpoints (newer WalletConnect registry hosts)
-      async function checkRegistry() {
-        const candidates = [
-          'https://api.walletconnect.com/v2/wallets',
-          'https://registry.walletconnect.com/api/v2/wallets',
-          'https://registry.walletconnect.com/v2/wallets',
-          'https://registry.walletconnect.com/wallets'
-        ];
-        let lastErr = null;
-        for (const url of candidates) {
-          try {
-            const res = await fetch(url, { method: 'GET', cache: 'no-store' });
-            // Treat any 2xx/3xx as success; return which URL responded
-            if (res.ok) return { ok: true, status: res.status, url };
-            // record non-OK status (like 404) but continue to try other endpoints
-            lastErr = { ok: true, status: res.status, url };
-            console.warn(`Registry probe ${url} returned status ${res.status}`);
-          } catch (e) {
-            lastErr = { ok: false, error: e, url };
-            console.warn(`Registry probe ${url} failed`, e);
-          }
-        }
-        return lastErr || { ok: false, error: new Error('No registry endpoints responded') };
-      }
+      // Read Project ID from UI if present
+      const projectInput = document.getElementById('wcProjectId');
+      const projectId = projectInput && projectInput.value ? projectInput.value.trim() : '';
 
-      async function testWebSocket(wsUrl, timeoutMs = 3000) {
-        return new Promise(resolve => {
-          let done = false;
-          try {
-            const ws = new WebSocket(wsUrl);
-            const timer = setTimeout(() => {
-              if (!done) { done = true; try { ws.close(); } catch (e) {} resolve({ ok: false, reason: 'timeout' }); }
-            }, timeoutMs);
-            ws.onopen = () => { if (!done) { done = true; clearTimeout(timer); try { ws.close(); } catch (e) {} resolve({ ok: true }); } };
-            ws.onerror = (err) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: false, reason: 'ws-error', error: err }); } };
-          } catch (e) {
-            resolve({ ok: false, error: e });
-          }
-        });
-      }
-      // Helper to locate UMD export under common global names or .default
-      const tryFind = () => {
-        const candidates = [
-          window.EthereumProvider,
-          window.WalletConnectProvider,
-          window.WalletConnect,
-          window.WalletConnectProvider && window.WalletConnectProvider.default,
-          window.WalletConnect && window.WalletConnect.default,
-          window.EthereumProvider && window.EthereumProvider.default
-        ];
-        for (const c of candidates) {
-          if (c && (typeof c.init === 'function' || typeof c === 'function')) return c;
-        }
-        return null;
+      // Configure Web3Modal standalone
+      const modalOptions = {
+        projectId: projectId || '3a5538ce9969461166625db3fdcbef8c', // fallback project id
+        walletConnectVersion: 2,
+        // EVM chains mapping (just for display; wallets still negotiate chain)
+        chains: NETWORKS.map(n => parseInt(n.chainId, 16))
       };
 
-  let UMD = tryFind();
-
-      // If the UMD runtime is an ES module namespace (common when bundlers expose a default),
-      // prefer the `.default` export which usually holds the actual factory/constructor.
-      if (UMD && typeof UMD === 'object' && (UMD.__esModule || UMD.default)) {
-        try {
-          if (UMD.default) {
-            console.log('WalletConnect UMD runtime is an ES module namespace — switching to .default');
-            UMD = UMD.default;
-          }
-        } catch (e) {
-          console.warn('Error accessing UMD.default, keeping original UMD object', e);
-        }
-      }
-
-      // If not found, try to dynamically load the UMD bundle from jsDelivr and retry
-      if (!UMD) {
-        console.log('WalletConnect UMD global not found — attempting to load script dynamically');
-        try {
-          await new Promise((resolve, reject) => {
-            const url = 'https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider/dist/umd/index.min.js';
-            if (document.querySelector(`script[src="${url}"]`)) return resolve();
-            const s = document.createElement('script');
-            s.src = url;
-            s.async = true;
-            s.onload = () => setTimeout(resolve, 50);
-            s.onerror = () => reject(new Error('Failed to load WalletConnect UMD: ' + url));
-            document.head.appendChild(s);
-          });
-        } catch (err) {
-          console.error('Failed to dynamically load WalletConnect UMD', err);
-        }
-
-        UMD = tryFind();
-      }
-
-      if (!UMD) {
-        console.error('WalletConnect v2 library not loaded - no UMD global detected');
-        alert('WalletConnect v2 library not loaded. Check that the UMD script is available.');
+      // web3Modal global from UMD: window.Web3Modal
+      if (!window.Web3Modal) {
+        alert('Web3Modal not loaded. Make sure the CDN script is included.');
         return;
       }
 
-      // Quick connectivity checks (registry + relay). If both fail we'll run an offline fallback
-      // that instantiates the provider with showQrModal=false and displays a manual QR.
-      let offlineFallback = false;
-      try {
-        const registryUrl = 'https://registry.walletconnect.com/api/v2/wallets';
-        const reg = await checkRegistry(registryUrl);
-        if (!reg.ok || (reg.status && reg.status >= 400)) {
-          console.warn('WalletConnect registry check failed', reg);
-          // try the relay directly as a fallback connectivity probe
-          const wsProbe = await testWebSocket('wss://relay.walletconnect.com');
-          if (!wsProbe.ok) {
-            console.error('Relay websocket probe failed', wsProbe);
-            console.warn('Proceeding with offline QR fallback — manual QR will be shown so wallets can connect');
-            offlineFallback = true;
-          } else {
-            console.log('Relay websocket probe OK (registry failed) — proceeding, but registry responded with', reg);
-          }
-        } else {
-          console.log('WalletConnect registry reachable (status ' + reg.status + ')');
-        }
-      } catch (probeErr) {
-        console.warn('Connectivity preflight for WalletConnect failed — proceeding with offline fallback', probeErr);
-        offlineFallback = true;
-      }
-
-      const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
-      // Try several strategies to initialize the provider when init() isn't obvious
-      const options = {
-        projectId: PROJECT_ID,
-        chains: [11155420, 11155111, 11155421],
-        // If our preflight detected no registry/relay, disable automatic QR modal and use manual QR overlay
-        showQrModal: !offlineFallback,
-        // Prefer WalletConnect Cloud relay; older builds may try deprecated bridge hosts
-        relayUrl: 'wss://relay.walletconnect.com',
-        // Optional fallback key used by some builds
-        relay: { url: 'wss://relay.walletconnect.com' },
-        rpcMap: {
-          11155420: "https://base-sepolia.rpc.thirdweb.com",
-          11155111: "https://rpc.sepolia.org",
-          11155421: "https://optimism-sepolia-public.nodies.app"
-        },
-        // Helpful metadata so registry lookups succeed
-        metadata: {
-          name: 'GM Test dApp',
-          description: 'Demo dApp for GM testing with WalletConnect',
-          url: window.location.origin,
-          icons: [window.location.origin + '/img/ether.svg']
-        }
-      };
-
-      // Helper: QR overlay for manual pairing when automatic registry/relay fail
-      function showQrOverlay(uri) {
-        if (!uri) return;
-        let overlay = document.getElementById('__wc_qr_overlay');
-        if (!overlay) {
-          overlay = document.createElement('div');
-          overlay.id = '__wc_qr_overlay';
-          overlay.style.position = 'fixed';
-          overlay.style.left = '0';
-          overlay.style.top = '0';
-          overlay.style.right = '0';
-          overlay.style.bottom = '0';
-          overlay.style.background = 'rgba(0,0,0,0.6)';
-          overlay.style.display = 'flex';
-          overlay.style.alignItems = 'center';
-          overlay.style.justifyContent = 'center';
-          overlay.style.zIndex = '99999';
-          overlay.innerHTML = `<div id="__wc_qr_box" style="background:#fff;padding:16px;border-radius:8px;text-align:center;max-width:90%;width:360px;"><h4>Scan with WalletConnect</h4><div id="__wc_qr_img"></div><div style="margin-top:8px"><button id="__wc_qr_close" class="btn btn-sm btn-secondary">Close</button></div></div>`;
-          document.body.appendChild(overlay);
-          document.getElementById('__wc_qr_close').addEventListener('click', () => { overlay.remove(); });
-        }
-        const img = document.getElementById('__wc_qr_img');
-        const encoded = encodeURIComponent(uri);
-        img.innerHTML = `<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=${encoded}" alt="WC QR">`;
-        overlay.style.display = 'flex';
-      }
-
-      let tried = [];
-
-      // 1) static init() on the object
-      try {
-        if (UMD && typeof UMD.init === 'function') {
-          console.log('Calling UMD.init()');
-          wcProvider = await UMD.init(options);
-        }
-      } catch (err) { tried.push(['UMD.init', err]); }
-
-      // 2) default.init()
-      if (!wcProvider && UMD && UMD.default) {
-        try {
-          if (typeof UMD.default.init === 'function') {
-            console.log('Calling UMD.default.init()');
-            wcProvider = await UMD.default.init(options);
-          }
-        } catch (err) { tried.push(['UMD.default.init', err]); }
-      }
-
-      // 3) constructor/class pattern: new UMD(options)
-      if (!wcProvider && typeof UMD === 'function') {
-        try {
-          console.log('Trying new UMD(options)');
-          const inst = new UMD(options);
-          // some builds return instance synchronously
-          if (inst) wcProvider = inst;
-        } catch (err) { tried.push(['new UMD()', err]); }
-      }
-
-      // 4) named nested providers (EthereumProvider / WalletConnectProvider)
-      if (!wcProvider && UMD && typeof UMD === 'object') {
-        const nestedCandidates = ['EthereumProvider', 'WalletConnectProvider', 'default'];
-        for (const key of nestedCandidates) {
-          const val = UMD[key];
-          if (!val) continue;
-          try {
-            if (typeof val.init === 'function') {
-              console.log(`Calling UMD["${key}"].init()`);
-              wcProvider = await val.init(options);
-              break;
-            }
-            if (typeof val === 'function') {
-              console.log(`Trying new UMD["${key}"](options)`);
-              const inst = new val(options);
-              if (inst) { wcProvider = inst; break; }
-            }
-          } catch (err) { tried.push([`UMD[${key}]`, err]); }
+      // Initialize standalone modal (singleton)
+      if (!window.__gm_web3modal) {
+        window.__gm_web3modal = new window.Web3Modal.default({ projectId: modalOptions.projectId });
+      } else {
+        // update projectId if changed
+        if (window.__gm_web3modal.projectId !== modalOptions.projectId) {
+          window.__gm_web3modal = new window.Web3Modal.default({ projectId: modalOptions.projectId });
         }
       }
 
-      // 5) search for any function-like props that look like init/create
-      if (!wcProvider && UMD && typeof UMD === 'object') {
-        const names = Object.getOwnPropertyNames(UMD).concat(Object.getOwnPropertyNames(Object.getPrototypeOf(UMD) || {}));
-        for (const name of names) {
-          try {
-            const val = UMD[name];
-            if (typeof val === 'function' && /(init|create)/i.test(name)) {
-              console.log(`Calling UMD["${name}"]()`);
-              const maybe = await val.call(UMD, options);
-              if (maybe) { wcProvider = maybe; break; }
-            }
-          } catch (err) { tried.push([`UMD prop ${name}`, err]); }
-        }
-      }
+      const wcProviderObj = await window.__gm_web3modal.connect();
+      if (!wcProviderObj) return alert('No provider returned from Web3Modal');
 
-      if (!wcProvider) {
-        console.error('Unable to initialize WalletConnect provider. Attempts:', tried);
-        console.error('UMD runtime value:', UMD);
-        alert('WalletConnect library loaded but initialization failed — see console for details.');
-        return;
-      }
-      
-      // If previous attempts didn't work, try dynamic ESM import as a last resort
-      if (!wcProvider) {
-        try {
-          console.log('Attempting dynamic ESM import fallback for WalletConnect provider');
-          const mod = await import('https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider/dist/esm/index.min.js');
-          console.log('ESM module keys:', Object.keys(mod));
-          const factory2 = mod.EthereumProvider || mod.default || mod;
-          if (factory2 && typeof factory2.init === 'function') {
-            wcProvider = await factory2.init(options);
-          } else if (typeof factory2 === 'function') {
-            // try constructor or static init
-            if (typeof factory2.init === 'function') wcProvider = await factory2.init(options);
-            else wcProvider = new factory2(options);
-          }
-        } catch (impErr) {
-          console.error('ESM import fallback failed', impErr);
-        }
-      }
-
-      // Diagnostic: dump provider internals to help debug registry/relay failures
-      try {
-        console.log('wcProvider keys:', Object.getOwnPropertyNames(wcProvider || {}));
-        console.log('wcProvider proto keys:', Object.getOwnPropertyNames(Object.getPrototypeOf(wcProvider) || {}));
-        // Try common places where a URI/session might be exposed
-        const possibleUris = [];
-        try { if (wcProvider.connector && wcProvider.connector.uri) possibleUris.push(wcProvider.connector.uri); } catch (e) {}
-        try { if (wcProvider.session && wcProvider.session.topic) possibleUris.push(wcProvider.session.topic); } catch (e) {}
-        try { if (wcProvider.session && wcProvider.session.uri) possibleUris.push(wcProvider.session.uri); } catch (e) {}
-        try { if (wcProvider._uri) possibleUris.push(wcProvider._uri); } catch (e) {}
-        try { if (wcProvider.uri) possibleUris.push(wcProvider.uri); } catch (e) {}
-        if (possibleUris.length) console.log('Possible provider URIs/topics:', possibleUris);
-      } catch (diagErr) {
-        console.warn('Error dumping wcProvider internals', diagErr);
-      }
-
-      try {
-        if (typeof wcProvider.connect === 'function') await wcProvider.connect();
-      } catch (connErr) {
-        console.error('wcProvider.connect() failed', connErr);
-        // If connect fails, attempt to find and surface a raw URI for QR/debugging
-        try {
-          const raw = (wcProvider && (wcProvider.connector?.uri || wcProvider.session?.uri || wcProvider._uri || wcProvider.uri));
-          if (raw) {
-            console.log('Extracted raw WC URI for debugging:', raw);
-            if (offlineFallback) {
-              // Show manual QR overlay so user can scan and pair
-              showQrOverlay(raw);
-              // don't throw — allow manual pairing to proceed
-            }
-          }
-        } catch (e) {}
-        if (!offlineFallback) throw connErr; // when not in offline mode rethrow
-      }
-      const ethersProvider = new ethers.BrowserProvider(wcProvider);
+      // wcProviderObj is an EIP-1193 provider; wrap with ethers
+      const ethersProvider = new ethers.BrowserProvider(wcProviderObj);
       wcSigner = await ethersProvider.getSigner();
 
       connectWcBtn.disabled = true;
@@ -418,10 +86,11 @@
       NETWORKS.forEach(net => initNetworkContainer(net, true));
       await updateAllStats(true);
     } catch (e) {
-      console.error('WalletConnect v2 error', e);
-      alert('WalletConnect connection failed: ' + (e && e.message ? e.message : e));
+      console.error('Web3Modal connection failed', e);
+      alert('WalletConnect / Web3Modal connection failed: ' + (e && e.message ? e.message : e));
     }
   }
+  
 
   function waitForEthereum(timeoutMs = 3000) {
     return new Promise(resolve => {
