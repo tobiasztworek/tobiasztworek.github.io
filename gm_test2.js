@@ -171,10 +171,21 @@
         projectId: PROJECT_ID,
         chains: [11155420, 11155111, 11155421],
         showQrModal: true,
+        // Prefer WalletConnect Cloud relay; older builds may try deprecated bridge hosts
+        relayUrl: 'wss://relay.walletconnect.com',
+        // Optional fallback key used by some builds
+        relay: { url: 'wss://relay.walletconnect.com' },
         rpcMap: {
           11155420: "https://base-sepolia.rpc.thirdweb.com",
           11155111: "https://rpc.sepolia.org",
           11155421: "https://optimism-sepolia-public.nodies.app"
+        },
+        // Helpful metadata so registry lookups succeed
+        metadata: {
+          name: 'GM Test dApp',
+          description: 'Demo dApp for GM testing with WalletConnect',
+          url: window.location.origin,
+          icons: [window.location.origin + '/img/ether.svg']
         }
       };
 
