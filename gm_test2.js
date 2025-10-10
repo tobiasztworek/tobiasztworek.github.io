@@ -108,13 +108,29 @@
   async function connectWalletConnect() {
     try {
       // Preflight: check registry and relay connectivity to provide clearer diagnostics
-      async function checkRegistry(url) {
-        try {
-          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
-          return { ok: true, status: res.status };
-        } catch (e) {
-          return { ok: false, error: e };
+      // Resilient registry checker: try a list of known endpoints (newer WalletConnect registry hosts)
+      async function checkRegistry() {
+        const candidates = [
+          'https://api.walletconnect.com/v2/wallets',
+          'https://registry.walletconnect.com/api/v2/wallets',
+          'https://registry.walletconnect.com/v2/wallets',
+          'https://registry.walletconnect.com/wallets'
+        ];
+        let lastErr = null;
+        for (const url of candidates) {
+          try {
+            const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+            // Treat any 2xx/3xx as success; return which URL responded
+            if (res.ok) return { ok: true, status: res.status, url };
+            // record non-OK status (like 404) but continue to try other endpoints
+            lastErr = { ok: true, status: res.status, url };
+            console.warn(`Registry probe ${url} returned status ${res.status}`);
+          } catch (e) {
+            lastErr = { ok: false, error: e, url };
+            console.warn(`Registry probe ${url} failed`, e);
+          }
         }
+        return lastErr || { ok: false, error: new Error('No registry endpoints responded') };
       }
 
       async function testWebSocket(wsUrl, timeoutMs = 3000) {
@@ -190,7 +206,9 @@
         return;
       }
 
-      // Quick connectivity checks (registry + relay) to avoid confusing internal errors
+      // Quick connectivity checks (registry + relay). If both fail we'll run an offline fallback
+      // that instantiates the provider with showQrModal=false and displays a manual QR.
+      let offlineFallback = false;
       try {
         const registryUrl = 'https://registry.walletconnect.com/api/v2/wallets';
         const reg = await checkRegistry(registryUrl);
@@ -200,8 +218,8 @@
           const wsProbe = await testWebSocket('wss://relay.walletconnect.com');
           if (!wsProbe.ok) {
             console.error('Relay websocket probe failed', wsProbe);
-            alert('Unable to reach WalletConnect services (registry/relay). Check network or add a valid Project ID. See console for details.');
-            return;
+            console.warn('Proceeding with offline QR fallback — manual QR will be shown so wallets can connect');
+            offlineFallback = true;
           } else {
             console.log('Relay websocket probe OK (registry failed) — proceeding, but registry responded with', reg);
           }
@@ -209,7 +227,8 @@
           console.log('WalletConnect registry reachable (status ' + reg.status + ')');
         }
       } catch (probeErr) {
-        console.warn('Connectivity preflight for WalletConnect failed', probeErr);
+        console.warn('Connectivity preflight for WalletConnect failed — proceeding with offline fallback', probeErr);
+        offlineFallback = true;
       }
 
       const PROJECT_ID = '3a5538ce9969461166625db3fdcbef8c'; // <- replace with your Project ID
@@ -217,7 +236,8 @@
       const options = {
         projectId: PROJECT_ID,
         chains: [11155420, 11155111, 11155421],
-        showQrModal: true,
+        // If our preflight detected no registry/relay, disable automatic QR modal and use manual QR overlay
+        showQrModal: !offlineFallback,
         // Prefer WalletConnect Cloud relay; older builds may try deprecated bridge hosts
         relayUrl: 'wss://relay.walletconnect.com',
         // Optional fallback key used by some builds
@@ -235,6 +255,33 @@
           icons: [window.location.origin + '/img/ether.svg']
         }
       };
+
+      // Helper: QR overlay for manual pairing when automatic registry/relay fail
+      function showQrOverlay(uri) {
+        if (!uri) return;
+        let overlay = document.getElementById('__wc_qr_overlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = '__wc_qr_overlay';
+          overlay.style.position = 'fixed';
+          overlay.style.left = '0';
+          overlay.style.top = '0';
+          overlay.style.right = '0';
+          overlay.style.bottom = '0';
+          overlay.style.background = 'rgba(0,0,0,0.6)';
+          overlay.style.display = 'flex';
+          overlay.style.alignItems = 'center';
+          overlay.style.justifyContent = 'center';
+          overlay.style.zIndex = '99999';
+          overlay.innerHTML = `<div id="__wc_qr_box" style="background:#fff;padding:16px;border-radius:8px;text-align:center;max-width:90%;width:360px;"><h4>Scan with WalletConnect</h4><div id="__wc_qr_img"></div><div style="margin-top:8px"><button id="__wc_qr_close" class="btn btn-sm btn-secondary">Close</button></div></div>`;
+          document.body.appendChild(overlay);
+          document.getElementById('__wc_qr_close').addEventListener('click', () => { overlay.remove(); });
+        }
+        const img = document.getElementById('__wc_qr_img');
+        const encoded = encodeURIComponent(uri);
+        img.innerHTML = `<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=${encoded}" alt="WC QR">`;
+        overlay.style.display = 'flex';
+      }
 
       let tried = [];
 
@@ -351,9 +398,16 @@
         // If connect fails, attempt to find and surface a raw URI for QR/debugging
         try {
           const raw = (wcProvider && (wcProvider.connector?.uri || wcProvider.session?.uri || wcProvider._uri || wcProvider.uri));
-          if (raw) console.log('Extracted raw WC URI for debugging:', raw);
+          if (raw) {
+            console.log('Extracted raw WC URI for debugging:', raw);
+            if (offlineFallback) {
+              // Show manual QR overlay so user can scan and pair
+              showQrOverlay(raw);
+              // don't throw — allow manual pairing to proceed
+            }
+          }
         } catch (e) {}
-        throw connErr;
+        if (!offlineFallback) throw connErr; // when not in offline mode rethrow
       }
       const ethersProvider = new ethers.BrowserProvider(wcProvider);
       wcSigner = await ethersProvider.getSigner();
