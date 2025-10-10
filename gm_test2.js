@@ -328,7 +328,33 @@
         }
       }
 
-      if (typeof wcProvider.connect === 'function') await wcProvider.connect();
+      // Diagnostic: dump provider internals to help debug registry/relay failures
+      try {
+        console.log('wcProvider keys:', Object.getOwnPropertyNames(wcProvider || {}));
+        console.log('wcProvider proto keys:', Object.getOwnPropertyNames(Object.getPrototypeOf(wcProvider) || {}));
+        // Try common places where a URI/session might be exposed
+        const possibleUris = [];
+        try { if (wcProvider.connector && wcProvider.connector.uri) possibleUris.push(wcProvider.connector.uri); } catch (e) {}
+        try { if (wcProvider.session && wcProvider.session.topic) possibleUris.push(wcProvider.session.topic); } catch (e) {}
+        try { if (wcProvider.session && wcProvider.session.uri) possibleUris.push(wcProvider.session.uri); } catch (e) {}
+        try { if (wcProvider._uri) possibleUris.push(wcProvider._uri); } catch (e) {}
+        try { if (wcProvider.uri) possibleUris.push(wcProvider.uri); } catch (e) {}
+        if (possibleUris.length) console.log('Possible provider URIs/topics:', possibleUris);
+      } catch (diagErr) {
+        console.warn('Error dumping wcProvider internals', diagErr);
+      }
+
+      try {
+        if (typeof wcProvider.connect === 'function') await wcProvider.connect();
+      } catch (connErr) {
+        console.error('wcProvider.connect() failed', connErr);
+        // If connect fails, attempt to find and surface a raw URI for QR/debugging
+        try {
+          const raw = (wcProvider && (wcProvider.connector?.uri || wcProvider.session?.uri || wcProvider._uri || wcProvider.uri));
+          if (raw) console.log('Extracted raw WC URI for debugging:', raw);
+        } catch (e) {}
+        throw connErr;
+      }
       const ethersProvider = new ethers.BrowserProvider(wcProvider);
       wcSigner = await ethersProvider.getSigner();
 
