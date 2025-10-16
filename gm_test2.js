@@ -544,8 +544,9 @@ if (typeof window !== 'undefined') {
       // it as handled to avoid noisy console traces and show a friendly hint.
       if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js')) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect browser-ponyfill error (setDefaultChain).');
-        alert('Wewnętrzny błąd WalletConnect podczas synchronizacji sieci. Spróbuj ponownie otworzyć modal lub użyć wbudowanego portfela (MetaMask).');
+        // Suppress the noisy walletconnect internal error popup. Log a concise
+        // warning for debugging but avoid alerting the user repeatedly.
+        console.warn('Suppressed WalletConnect browser-ponyfill error (setDefaultChain). See console for details.');
         return;
       }
       // If it looks like a DNS/network failure to the WC relay, show a tip
