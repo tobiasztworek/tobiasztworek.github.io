@@ -90,6 +90,19 @@ export function init() {
   let signer;
   // Active EIP-1193 provider (from AppKit/EthersAdapter or injected)
   let activeEip1193Provider = null;
+  // Track whether network containers have already been rendered to avoid duplicates
+  let networksRendered = false;
+
+  // Render network cards immediately so the interface is visible even when
+  // no wallet is connected. initNetworkContainer is idempotent-guarded below.
+  function renderNetworkUIOnce() {
+    if (networksRendered) return;
+    networksRendered = true;
+    NETWORKS.forEach(net => initNetworkContainer(net));
+  }
+
+  // Render UI now so user sees the app even without wallet
+  renderNetworkUIOnce();
 
   function getActiveProvider() {
     if (activeEip1193Provider) return activeEip1193Provider;
@@ -167,6 +180,7 @@ export function init() {
         // and only assign it when ready. Otherwise fall back to injected.
         const ready = await waitForProviderReady(providerCandidate, 2000);
         if (ready) {
+          console.debug('AppKit provider ready — using it');
           activeEip1193Provider = providerCandidate;
         } else {
           console.warn('Provider found but not ready (missing internal API); falling back to injected provider.');
@@ -182,7 +196,8 @@ export function init() {
       // result in the injected provider appearing a short time after the
       // user starts the connect flow. Wait briefly for window.ethereum to
       // appear before giving up and showing the install modal message.
-      const injectedAvailable = await waitForInjectedProvider(5000);
+  const injectedAvailable = await waitForInjectedProvider(5000);
+  console.debug('Injected provider available:', injectedAvailable, 'window.ethereum present:', !!(typeof window !== 'undefined' && window.ethereum));
       if (!injectedAvailable) {
         // No injected provider detected in time — show friendly hint but
         // don't throw; user can retry.
@@ -190,6 +205,7 @@ export function init() {
       } else {
         try {
           await window.ethereum.request({ method: "eth_requestAccounts" });
+          console.debug('Injected provider granted accounts');
           activeEip1193Provider = window.ethereum;
         } catch (e) {
           console.error('eth_requestAccounts failed', e);
@@ -198,8 +214,10 @@ export function init() {
     }
 
   const provider = getEthersProvider();
-  if (!provider) { alert('No provider available'); return; }
+  if (!provider) { console.warn('No provider available at finalization step'); return; }
   signer = await provider.getSigner();
+  // Re-render network UI now that signer exists (avoid duplicate rendering)
+  renderNetworkUIOnce();
     connectBtn.disabled = true;
     connectBtn.textContent = "Connected";
     disconnectBtn.disabled = false;
