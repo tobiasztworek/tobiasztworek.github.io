@@ -197,8 +197,9 @@ export function init() {
       }
     }
 
-    const provider = new ethers.BrowserProvider(getActiveProvider());
-    signer = await provider.getSigner();
+  const provider = getEthersProvider();
+  if (!provider) { alert('No provider available'); return; }
+  signer = await provider.getSigner();
     connectBtn.disabled = true;
     connectBtn.textContent = "Connected";
     disconnectBtn.disabled = false;
@@ -223,6 +224,20 @@ export function init() {
         }
       }, interval);
     });
+  }
+
+  // Return an ethers BrowserProvider built from the active provider, or
+  // null if no active provider is available or it's invalid. This prevents
+  // passing null into ethers which throws 'invalid EIP-1193 provider'.
+  function getEthersProvider() {
+    const active = getActiveProvider();
+    if (!active) return null;
+    try {
+      return new ethers.BrowserProvider(active);
+    } catch (e) {
+      console.error('Invalid EIP-1193 provider', e);
+      return null;
+    }
   }
 
   // Check reachability of the WalletConnect relay endpoint. A failed DNS
@@ -328,10 +343,11 @@ export function init() {
 
     fetchFeeBtn.addEventListener("click", async () => {
       try {
-        statusText.textContent = "Fee colculation...";
-        await switchToNetwork(net);
-  const provider = new ethers.BrowserProvider(getActiveProvider());
-        const signer = await provider.getSigner();
+    statusText.textContent = "Fee colculation...";
+    await switchToNetwork(net);
+    const provider = getEthersProvider();
+    if (!provider) { statusText.textContent = 'No provider'; return; }
+    const signer = await provider.getSigner();
         contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const feeWei = await contract.getGmFeeInEth();
         feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
@@ -346,9 +362,10 @@ export function init() {
       try {
         sayGmBtn.disabled = true;
         statusText.textContent = "Preparing transaction...";
-        await switchToNetwork(net);
-  const provider = new ethers.BrowserProvider(getActiveProvider());
-        const signer = await provider.getSigner();
+    await switchToNetwork(net);
+    const provider = getEthersProvider();
+    if (!provider) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; return; }
+    const signer = await provider.getSigner();
         contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const feeWei = await contract.getGmFeeInEth();
         const tx = await contract.sayGM({ value: feeWei });
@@ -381,9 +398,10 @@ export function init() {
 
       try {
         statusText.textContent = "Gathering stats...";
-        await switchToNetwork(net);
-  const provider = new ethers.BrowserProvider(getActiveProvider());
-        const signer = await provider.getSigner();
+    await switchToNetwork(net);
+    const provider = getEthersProvider();
+    if (!provider) { statusText.textContent = 'No provider'; continue; }
+    const signer = await provider.getSigner();
         const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const user = await contract.getUserSafe(await signer.getAddress());
         streakText.textContent = user[0];
@@ -449,7 +467,8 @@ export function init() {
           const accounts = await providerCandidate.request({ method: 'eth_accounts' });
           if (accounts && accounts.length) {
             activeEip1193Provider = providerCandidate;
-            const provider = new ethers.BrowserProvider(getActiveProvider());
+            const provider = getEthersProvider();
+            if (!provider) return false;
             signer = await provider.getSigner();
             connectBtn.disabled = true;
             connectBtn.textContent = "Connected";
@@ -469,7 +488,8 @@ export function init() {
           const accounts = await window.ethereum.request({ method: 'eth_accounts' });
           if (accounts && accounts.length) {
             activeEip1193Provider = window.ethereum;
-            const provider = new ethers.BrowserProvider(getActiveProvider());
+            const provider = getEthersProvider();
+            if (!provider) return false;
             signer = await provider.getSigner();
             connectBtn.disabled = true;
             connectBtn.textContent = "Connected";
