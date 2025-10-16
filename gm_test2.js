@@ -117,27 +117,58 @@ export function init() {
   }
 
   async function switchToNetwork(net) {
-    try {
-      const p = getActiveProvider();
-      if (p && typeof p.request === 'function') {
-        await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: net.chainId }] });
-      } else {
-        throw new Error('No provider available for network switch');
+    // Try active provider first (AppKit modal provider or injected assigned provider)
+    const p = getActiveProvider();
+    const switchParams = [{ chainId: net.chainId }];
+    const addParams = [{
+      chainId: net.chainId,
+      chainName: net.name,
+      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+      rpcUrls: [net.rpcUrl],
+      blockExplorerUrls: [net.explorer]
+    }];
+
+    if (p && typeof p.request === 'function') {
+      try {
+        await p.request({ method: "wallet_switchEthereumChain", params: switchParams });
+        return true;
+      } catch (err) {
+        // If chain not added, try to add it via the same provider
+        if (err && err.code === 4902) {
+          try {
+            await p.request({ method: "wallet_addEthereumChain", params: addParams });
+            return true;
+          } catch (addErr) {
+            console.warn('Provider add chain failed', addErr);
+          }
+        } else {
+          console.warn('Provider switch failed', err);
+        }
       }
-    } catch (err) {
-      if (err.code === 4902) {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{
-            chainId: net.chainId,
-            chainName: net.name,
-            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-            rpcUrls: [net.rpcUrl],
-            blockExplorerUrls: [net.explorer]
-          }]
-        });
-      } else throw err;
     }
+
+    // Fallback to window.ethereum if it's available
+    if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: switchParams });
+        return true;
+      } catch (err) {
+        if (err && err.code === 4902) {
+          try {
+            await window.ethereum.request({ method: "wallet_addEthereumChain", params: addParams });
+            return true;
+          } catch (addErr) {
+            console.warn('window.ethereum add chain failed', addErr);
+          }
+        } else {
+          console.warn('window.ethereum switch failed', err);
+        }
+      }
+    }
+
+    // No provider available or all attempts failed — inform the user but don't throw
+    alert('No wallet provider available for network switch. Connect a wallet or switch the network manually in your wallet.');
+    return false;
   }
 
   async function connect() {
