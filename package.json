@@ -1,0 +1,16 @@
+{
+  "name": "gm-dapp-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild gm_test2.js --bundle --minify --sourcemap --outfile=dist/gm_test2.bundle.js",
+    "build:watch": "esbuild gm_test2.js --bundle --sourcemap --outfile=dist/gm_test2.bundle.js --watch"
+  },
+  "dependencies": {
+    "ethers": "^6.11.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.19.0"
+  }
+}
