@@ -84,7 +84,6 @@ export function init() {
   ];
 
   const connectBtn = document.getElementById("connectBtn");
-  const disconnectBtn = document.getElementById("disconnectBtn");
   const networksRow = document.getElementById("networksRow");
 
   let signer;
@@ -270,9 +269,8 @@ export function init() {
   signer = await provider.getSigner();
   // Re-render network UI now that signer exists (avoid duplicate rendering)
   renderNetworkUIOnce();
-    connectBtn.disabled = true;
-    connectBtn.textContent = "Connected";
-    disconnectBtn.disabled = false;
+  connectBtn.disabled = false; // keep button active
+  connectBtn.textContent = "Connected";
     NETWORKS.forEach(net => initNetworkContainer(net));
     await updateAllStats();
   }
@@ -351,7 +349,6 @@ export function init() {
     signer = null;
     networksRow.innerHTML = "";
     connectBtn.disabled = false;
-    disconnectBtn.disabled = true;
     connectBtn.textContent = "Connect MetaMask";
   }
 
@@ -526,7 +523,6 @@ export function init() {
 
 
   connectBtn.addEventListener("click", connect);
-  disconnectBtn.addEventListener("click", disconnect);
 
   // Attempt to restore an existing wallet connection on page reload.
   // Checks AppKit modal provider first, then falls back to injected provider.
@@ -546,9 +542,8 @@ export function init() {
             const provider = getEthersProvider();
             if (!provider) return false;
             signer = await provider.getSigner();
-            connectBtn.disabled = true;
+            connectBtn.disabled = false; // keep button active
             connectBtn.textContent = "Connected";
-            disconnectBtn.disabled = false;
             NETWORKS.forEach(net => initNetworkContainer(net));
             await updateAllStats();
             return true;
@@ -567,9 +562,8 @@ export function init() {
             const provider = getEthersProvider();
             if (!provider) return false;
             signer = await provider.getSigner();
-            connectBtn.disabled = true;
+            connectBtn.disabled = false;
             connectBtn.textContent = "Connected";
-            disconnectBtn.disabled = false;
             NETWORKS.forEach(net => initNetworkContainer(net));
             await updateAllStats();
             return true;
@@ -609,9 +603,8 @@ export function init() {
             const provider = getEthersProvider();
             if (provider) {
               signer = await provider.getSigner();
-              connectBtn.disabled = true;
+              connectBtn.disabled = false;
               connectBtn.textContent = 'Connected';
-              disconnectBtn.disabled = false;
               renderNetworkUIOnce();
               await updateAllStats();
             }
