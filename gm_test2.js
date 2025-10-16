@@ -167,9 +167,23 @@ export function init() {
 
     // Fallback to injected provider
     if (!getActiveProvider()) {
-      if (!window.ethereum) return alert("Install MetaMask or open AppKit modal.");
-      await window.ethereum.request({ method: "eth_requestAccounts" });
-      activeEip1193Provider = window.ethereum;
+      // Mobile deep-link flows (open MetaMask app and return) sometimes
+      // result in the injected provider appearing a short time after the
+      // user starts the connect flow. Wait briefly for window.ethereum to
+      // appear before giving up and showing the install modal message.
+      const injectedAvailable = await waitForInjectedProvider(5000);
+      if (!injectedAvailable) {
+        // No injected provider detected in time — show friendly hint but
+        // don't throw; user can retry.
+        alert("Install MetaMask or open AppKit modal.");
+      } else {
+        try {
+          await window.ethereum.request({ method: "eth_requestAccounts" });
+          activeEip1193Provider = window.ethereum;
+        } catch (e) {
+          console.error('eth_requestAccounts failed', e);
+        }
+      }
     }
 
     const provider = new ethers.BrowserProvider(getActiveProvider());
@@ -179,6 +193,25 @@ export function init() {
     disconnectBtn.disabled = false;
     NETWORKS.forEach(net => initNetworkContainer(net));
     await updateAllStats();
+  }
+
+  // Wait for an injected provider (window.ethereum) to appear within the
+  // specified timeout (ms). Returns true if found, false otherwise.
+  function waitForInjectedProvider(timeout = 3000, interval = 200) {
+    return new Promise(resolve => {
+      if (typeof window !== 'undefined' && window.ethereum) return resolve(true);
+      const start = Date.now();
+      const id = setInterval(() => {
+        if (typeof window !== 'undefined' && window.ethereum) {
+          clearInterval(id);
+          return resolve(true);
+        }
+        if (Date.now() - start > timeout) {
+          clearInterval(id);
+          return resolve(false);
+        }
+      }, interval);
+    });
   }
 
   // Check reachability of the WalletConnect relay endpoint. A failed DNS
