@@ -287,8 +287,24 @@ async function connect() {
   }
   if (providerCandidate && typeof providerCandidate.request === 'function') {
     try {
-      const finalized = await finalizeModalProvider(providerCandidate).catch(() => false);
-      if (finalized) activeEip1193Provider = providerCandidate;
+      // Optimistically accept the modal provider so UI updates immediately.
+      activeEip1193Provider = providerCandidate;
+      connectBtn.textContent = 'Connected';
+      clearBanner();
+      renderNetworkUIOnce();
+      // Finalize in background; if finalization fails (expired session), show reconnect CTA.
+      (async () => {
+        const finalized = await finalizeModalProvider(providerCandidate).catch(() => false);
+        if (!finalized) {
+          // show reconnect banner only if the provider turned out unusable
+          showBanner('Connected wallet appears unusable. Reconnect to refresh WalletConnect session.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          // clear optimistic provider so other fallbacks can be attempted later
+          activeEip1193Provider = null;
+          connectBtn.textContent = 'Connect';
+        } else {
+          try { signer = (await getEthersProvider())?.getSigner(); await updateAllStats(); } catch (e) { console.debug('post-finalize update failed', e); }
+        }
+      })();
     } catch (e) { console.warn('providerCandidate probe failed', e); }
   }
   if (!getActiveProvider()) {
