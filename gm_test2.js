@@ -245,7 +245,28 @@ export function init() {
     }
 
   const provider = getEthersProvider();
-  if (!provider) { console.warn('No provider available at finalization step'); return; }
+  if (!provider) {
+    console.warn('No provider available at finalization step — attempting one last AppKit modal retry');
+    // Try one last time to open the modal and poll for a provider. This
+    // helps mobile deep-link flows where the provider may appear a bit
+    // later or AppKit modal was dismissed prematurely.
+    try {
+      try { modal.open(); } catch (e) { /* ignore */ }
+      let p = null;
+      for (let i = 0; i < 10; i++) {
+        try { p = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
+        if (p) break;
+        await new Promise(r => setTimeout(r, 300));
+      }
+      if (p) {
+        activeEip1193Provider = p;
+      }
+    } catch (e) {
+      console.debug('Finalization retry attempt failed', e);
+    }
+  }
+  const providerAfterRetry = getEthersProvider();
+  if (!providerAfterRetry) { console.warn('Still no provider available after retry — aborting finalization'); return; }
   signer = await provider.getSigner();
   // Re-render network UI now that signer exists (avoid duplicate rendering)
   renderNetworkUIOnce();
@@ -584,6 +605,16 @@ if (typeof window !== 'undefined') {
       if (reasonStr.includes('ERR_NAME_NOT_RESOLVED') || reasonStr.includes('relay.walletconnect.org')) {
         try { ev.preventDefault(); } catch (e) {}
         alert('Błąd sieci: nie można rozwiązać hosta relay.walletconnect.org. Sprawdź połączenie sieciowe lub spróbuj innej sieci.');
+        return;
+      }
+
+      // Suppress WalletConnect session-topic missing-key noise which can
+      // surface when a session is expired or a topic is no longer present
+      // on the relay. These are internal WC relay/session lifecycle logs
+      // and don't need to bubble as uncaught exceptions in the app UI.
+      if (reasonStr.includes("No matching key") || reasonStr.includes("session topic doesn't exist")) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect session-topic error:', reasonStr.split('\n')[0]);
         return;
       }
     } catch (e) {}
