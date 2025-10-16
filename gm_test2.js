@@ -436,9 +436,21 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (ev) => {
     try {
       console.error('Unhandled promise rejection:', ev.reason);
-      // If it looks like a network/DNS failure to the WC relay, show a tip
-      if (typeof ev.reason === 'string' && ev.reason.includes('ERR_NAME_NOT_RESOLVED')) {
-        alert('Błąd sieci: nie można rozwiązać hosta relay.walletconnect.org. Sprawdź połączenie sieciowe lub użyj innej sieci.');
+      const reasonStr = (ev.reason && (ev.reason.stack || ev.reason.message || String(ev.reason))) || '';
+      // Recognize the WalletConnect/browser-ponyfill 'setDefaultChain' crash
+      // (it happens when an internal object is not yet initialized). Treat
+      // it as handled to avoid noisy console traces and show a friendly hint.
+      if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js')) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect browser-ponyfill error (setDefaultChain).');
+        alert('Wewnętrzny błąd WalletConnect podczas synchronizacji sieci. Spróbuj ponownie otworzyć modal lub użyć wbudowanego portfela (MetaMask).');
+        return;
+      }
+      // If it looks like a DNS/network failure to the WC relay, show a tip
+      if (reasonStr.includes('ERR_NAME_NOT_RESOLVED') || reasonStr.includes('relay.walletconnect.org')) {
+        try { ev.preventDefault(); } catch (e) {}
+        alert('Błąd sieci: nie można rozwiązać hosta relay.walletconnect.org. Sprawdź połączenie sieciowe lub spróbuj innej sieci.');
+        return;
       }
     } catch (e) {}
   });
