@@ -356,6 +356,12 @@ export function init() {
   }
 
   function initNetworkContainer(net) {
+    // Idempotency guard: if we've already created a card for this chain, skip.
+    try {
+      if (networksRow.querySelector(`.status-card[data-chain="${net.chainId}"]`)) return;
+    } catch (e) {
+      // defensive: if networksRow isn't available for some reason, continue
+    }
     const col = document.createElement("div");
     col.className = "col-12 col-md-6";
 
@@ -580,6 +586,45 @@ export function init() {
 
   // Try to restore connection but don't block initialization if it fails
   tryRestoreConnection().catch(e => console.error('restore connection failed', e));
+
+  // On mobile, returning from an external wallet app (MetaMask) via deep-link
+  // often doesn't inject window.ethereum until the tab regains focus or
+  // visibility. Listen for visibility/focus events and attempt to finalize
+  // connection automatically. Placed inside init() so it can access scoped
+  // variables like activeEip1193Provider, signer and the connect/disconnect buttons.
+  async function tryFinalizeInjectedOnResume() {
+    try {
+      if (typeof window === 'undefined') return;
+      if (!window.document) return;
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        // Try to detect injected provider quickly
+        const present = !!window.ethereum;
+        console.debug('Resume check - injected present:', present);
+        if (present && !activeEip1193Provider) {
+          try {
+            // Request accounts to trigger MetaMask's injection/permissions if needed
+            await window.ethereum.request({ method: 'eth_requestAccounts' });
+            activeEip1193Provider = window.ethereum;
+            // finalize signer and UI
+            const provider = getEthersProvider();
+            if (provider) {
+              signer = await provider.getSigner();
+              connectBtn.disabled = true;
+              connectBtn.textContent = 'Connected';
+              disconnectBtn.disabled = false;
+              renderNetworkUIOnce();
+              await updateAllStats();
+            }
+          } catch (e) {
+            console.debug('Resume injected finalization failed', e);
+          }
+        }
+      }
+    } catch (e) { console.error('resume handler error', e); }
+  }
+
+  window.addEventListener('visibilitychange', () => { tryFinalizeInjectedOnResume(); });
+  window.addEventListener('focus', () => { tryFinalizeInjectedOnResume(); });
 }
 
 // Auto-initialize when loaded in browser
@@ -625,43 +670,6 @@ if (typeof window !== 'undefined') {
       console.error('Global error:', ev.error || ev.message, ev);
     } catch (e) {}
   });
-  // On mobile, returning from an external wallet app (MetaMask) via deep-link
-  // often doesn't inject window.ethereum until the tab regains focus or
-  // visibility. Listen for visibility/focus events and attempt to finalize
-  // connection automatically.
-  async function tryFinalizeInjectedOnResume() {
-    try {
-      if (typeof window === 'undefined') return;
-      if (!window.document) return;
-      if (document.visibilityState === 'visible' || document.hasFocus()) {
-        // Try to detect injected provider quickly
-        const present = !!window.ethereum;
-        console.debug('Resume check - injected present:', present);
-        if (present && !activeEip1193Provider) {
-          try {
-            // Request accounts to trigger MetaMask's injection/permissions if needed
-            await window.ethereum.request({ method: 'eth_requestAccounts' });
-            activeEip1193Provider = window.ethereum;
-            // finalize signer and UI
-            const provider = getEthersProvider();
-            if (provider) {
-              signer = await provider.getSigner();
-              connectBtn.disabled = true;
-              connectBtn.textContent = 'Connected';
-              disconnectBtn.disabled = false;
-              renderNetworkUIOnce();
-              await updateAllStats();
-            }
-          } catch (e) {
-            console.debug('Resume injected finalization failed', e);
-          }
-        }
-      }
-    } catch (e) { console.error('resume handler error', e); }
-  }
-
-  window.addEventListener('visibilitychange', () => { tryFinalizeInjectedOnResume(); });
-  window.addEventListener('focus', () => { tryFinalizeInjectedOnResume(); });
   window.addEventListener('DOMContentLoaded', () => {
     // wait a tick so HTML elements are present
     try {
