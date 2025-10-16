@@ -653,6 +653,14 @@ if (typeof window !== 'undefined') {
         return;
       }
 
+      // Suppress browser-ponyfill internal errors related to setDefaultChain
+      // which surface when internal controller objects are not yet ready.
+      if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js') || (reasonStr.includes('Cannot read properties of undefined') && reasonStr.includes('setDefaultChain'))) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain). See console for details.');
+        return;
+      }
+
       // Suppress WalletConnect session-topic missing-key noise which can
       // surface when a session is expired or a topic is no longer present
       // on the relay. These are internal WC relay/session lifecycle logs
@@ -667,6 +675,14 @@ if (typeof window !== 'undefined') {
 
   window.addEventListener('error', (ev) => {
     try {
+      const msg = ev && (ev.error && (ev.error.stack || ev.error.message) || ev.message || '');
+      const msgStr = String(msg || '');
+      // Suppress the same browser-ponyfill setDefaultChain TypeError
+      if (msgStr.includes('setDefaultChain') || msgStr.includes('browser-ponyfill.js') || (msgStr.includes('Cannot read properties of undefined') && msgStr.includes('setDefaultChain'))) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain). See console for details.');
+        return;
+      }
       console.error('Global error:', ev.error || ev.message, ev);
     } catch (e) {}
   });
