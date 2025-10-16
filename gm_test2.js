@@ -11,7 +11,7 @@ const projectId = "3a5538ce9969461166625db3fdcbef8c";
 const metadata = {
   name: "dApp GM",
   description: "dApp to say GM on multiple chains",
-  url: "http://web/", // origin must match your domain & subdomain
+  url: "http://tobiasztworek.github.io/", // origin must match your domain & subdomain
   icons: ["https://avatars.githubusercontent.com/u/179229932"],
 };
 
