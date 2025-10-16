@@ -215,26 +215,37 @@ export function init() {
         // Some WalletConnect providers may be partially initialized when
         // returned by modal.getProvider(). The browser-ponyfill error we
         // observed (`setDefaultChain` of undefined) happens when internal
-        // controller objects are not ready yet. Wait briefly for the
-        // provider to become ready (or detect it's missing the expected API)
-        // and only assign it when ready. Otherwise fall back to injected.
-        const ready = await waitForProviderReady(providerCandidate, 2000);
-        if (ready) {
-          console.debug('AppKit provider ready — using it');
-          activeEip1193Provider = providerCandidate;
-        } else {
-          console.warn('Provider found but not ready (missing internal API); attempting eth_accounts() as a fallback.');
-          try {
-            const accounts = await providerCandidate.request({ method: 'eth_accounts' });
-            if (accounts && accounts.length) {
-              console.debug('Provider returned accounts via eth_accounts — using it');
+        // controller objects are not ready yet. Try a couple of strategies:
+        // 1) Attempt eth_accounts() immediately — if the provider already
+        //    knows the accounts we can use it.
+        // 2) Wait longer for internal readiness before giving up.
+        try {
+          const accountsNow = await providerCandidate.request({ method: 'eth_accounts' }).catch(() => null);
+          if (accountsNow && accountsNow.length) {
+            console.debug('Provider returned accounts immediately via eth_accounts — using it');
+            activeEip1193Provider = providerCandidate;
+          } else {
+            const ready = await waitForProviderReady(providerCandidate, 5000);
+            if (ready) {
+              console.debug('AppKit provider ready — using it');
               activeEip1193Provider = providerCandidate;
             } else {
-              console.warn('Provider eth_accounts returned no accounts; falling back to injected provider.');
+              console.warn('Provider found but not ready after timeout; attempting eth_accounts() as a fallback.');
+              try {
+                const accounts = await providerCandidate.request({ method: 'eth_accounts' });
+                if (accounts && accounts.length) {
+                  console.debug('Provider returned accounts via eth_accounts after wait — using it');
+                  activeEip1193Provider = providerCandidate;
+                } else {
+                  console.warn('Provider eth_accounts returned no accounts after wait; falling back to injected provider.');
+                }
+              } catch (acctErr) {
+                console.warn('Provider eth_accounts attempt failed after wait, falling back to injected provider.', acctErr);
+              }
             }
-          } catch (acctErr) {
-            console.warn('Provider eth_accounts attempt failed, falling back to injected provider.', acctErr);
           }
+        } catch (innerErr) {
+          console.warn('Error probing providerCandidate for accounts/readiness', innerErr);
         }
       }
     } catch (e) {
@@ -279,7 +290,19 @@ export function init() {
         await new Promise(r => setTimeout(r, 300));
       }
       if (p) {
-        activeEip1193Provider = p;
+        // Try eth_accounts on the provider found during retry
+        try {
+          const acc = await p.request({ method: 'eth_accounts' }).catch(() => null);
+          if (acc && acc.length) {
+            activeEip1193Provider = p;
+          } else {
+            // accept provider object but don't assume accounts — we'll
+            // finalize later via request when needed
+            activeEip1193Provider = p;
+          }
+        } catch (e) {
+          console.debug('Retry provider eth_accounts attempt failed', e);
+        }
       }
     } catch (e) {
       console.debug('Finalization retry attempt failed', e);
