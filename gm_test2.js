@@ -133,7 +133,25 @@ export function init() {
       let providerCandidate = null;
       try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
       if (!providerCandidate) {
-        try { modal.open(); } catch(e){}
+        // Before opening the modal, do a quick reachability check for the
+        // WalletConnect relay. On some mobile networks or DNS setups the
+        // relay host (relay.walletconnect.org) may not resolve which causes
+        // the WebSocket connection to fail and deeper WalletConnect code to
+        // error (e.g., reading setDefaultChain of undefined). Detect that
+        // early and show a helpful message instead of letting low-level
+        // runtime errors surface.
+        let relayOk = true;
+        try {
+          relayOk = await isRelayReachable();
+        } catch (e) {
+          relayOk = false;
+        }
+        if (!relayOk) {
+          // Friendly message for end-user; keep the app usable with injected wallets
+          alert('Nie można połączyć się z serwerem WalletConnect (relay). Sprawdź połączenie sieciowe lub spróbuj innej sieci.');
+        } else {
+          try { modal.open(); } catch(e){}
+        }
         for (let i = 0; i < 20; i++) {
           try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
           if (providerCandidate) break;
@@ -161,6 +179,26 @@ export function init() {
     disconnectBtn.disabled = false;
     NETWORKS.forEach(net => initNetworkContainer(net));
     await updateAllStats();
+  }
+
+  // Check reachability of the WalletConnect relay endpoint. A failed DNS
+  // resolution will cause the relay websocket to throw net::ERR_NAME_NOT_RESOLVED
+  // and cascade into uncaught errors inside walletconnect libraries. This
+  // function performs a small fetch with timeout to detect that condition.
+  async function isRelayReachable(timeout = 3000) {
+    const url = 'https://relay.walletconnect.org/';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const res = await fetch(url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
+      clearTimeout(timer);
+      // mode: 'no-cors' will typically return opaque responses; if we got here
+      // without throwing, assume the host is reachable.
+      return true;
+    } catch (err) {
+      clearTimeout(timer);
+      return false;
+    }
   }
 
   function disconnect() {
@@ -392,6 +430,24 @@ export function init() {
 
 // Auto-initialize when loaded in browser
 if (typeof window !== 'undefined') {
+  // Global diagnostics: surface unhandled rejections and errors so we can
+  // provide clearer messages for WalletConnect relay failures observed on
+  // some mobile browsers/networks.
+  window.addEventListener('unhandledrejection', (ev) => {
+    try {
+      console.error('Unhandled promise rejection:', ev.reason);
+      // If it looks like a network/DNS failure to the WC relay, show a tip
+      if (typeof ev.reason === 'string' && ev.reason.includes('ERR_NAME_NOT_RESOLVED')) {
+        alert('Błąd sieci: nie można rozwiązać hosta relay.walletconnect.org. Sprawdź połączenie sieciowe lub użyj innej sieci.');
+      }
+    } catch (e) {}
+  });
+
+  window.addEventListener('error', (ev) => {
+    try {
+      console.error('Global error:', ev.error || ev.message, ev);
+    } catch (e) {}
+  });
   window.addEventListener('DOMContentLoaded', () => {
     // wait a tick so HTML elements are present
     try {
