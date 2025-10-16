@@ -563,6 +563,43 @@ if (typeof window !== 'undefined') {
       console.error('Global error:', ev.error || ev.message, ev);
     } catch (e) {}
   });
+  // On mobile, returning from an external wallet app (MetaMask) via deep-link
+  // often doesn't inject window.ethereum until the tab regains focus or
+  // visibility. Listen for visibility/focus events and attempt to finalize
+  // connection automatically.
+  async function tryFinalizeInjectedOnResume() {
+    try {
+      if (typeof window === 'undefined') return;
+      if (!window.document) return;
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        // Try to detect injected provider quickly
+        const present = !!window.ethereum;
+        console.debug('Resume check - injected present:', present);
+        if (present && !activeEip1193Provider) {
+          try {
+            // Request accounts to trigger MetaMask's injection/permissions if needed
+            await window.ethereum.request({ method: 'eth_requestAccounts' });
+            activeEip1193Provider = window.ethereum;
+            // finalize signer and UI
+            const provider = getEthersProvider();
+            if (provider) {
+              signer = await provider.getSigner();
+              connectBtn.disabled = true;
+              connectBtn.textContent = 'Connected';
+              disconnectBtn.disabled = false;
+              renderNetworkUIOnce();
+              await updateAllStats();
+            }
+          } catch (e) {
+            console.debug('Resume injected finalization failed', e);
+          }
+        }
+      }
+    } catch (e) { console.error('resume handler error', e); }
+  }
+
+  window.addEventListener('visibilitychange', () => { tryFinalizeInjectedOnResume(); });
+  window.addEventListener('focus', () => { tryFinalizeInjectedOnResume(); });
   window.addEventListener('DOMContentLoaded', () => {
     // wait a tick so HTML elements are present
     try {
