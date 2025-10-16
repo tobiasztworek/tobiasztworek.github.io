@@ -186,17 +186,34 @@ export function init() {
   // and cascade into uncaught errors inside walletconnect libraries. This
   // function performs a small fetch with timeout to detect that condition.
   async function isRelayReachable(timeout = 3000) {
-    const url = 'https://relay.walletconnect.org/';
+    // Primary: use DNS-over-HTTPS to check whether relay.walletconnect.org resolves.
+    // This avoids making requests directly to the relay HTTP endpoint which can
+    // return 405 Method Not Allowed. Google DoH returns JSON and supports CORS.
+    const doh = `https://dns.google/resolve?name=relay.walletconnect.org&type=A`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      const res = await fetch(url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
+      const res = await fetch(doh, { method: 'GET', signal: controller.signal });
       clearTimeout(timer);
-      // mode: 'no-cors' will typically return opaque responses; if we got here
-      // without throwing, assume the host is reachable.
+      if (!res.ok) return false;
+      const j = await res.json();
+      // If there are Answers, the host resolves
+      if (j && (j.Answer && j.Answer.length > 0)) return true;
+    } catch (err) {
+      // fall through to fallback
+      clearTimeout(timer);
+    }
+
+    // Fallback: try a direct GET to the relay root. Some environments will
+    // return 405 for HEAD; using GET with no-cors may still fail but we'll
+    // use it as a last resort to detect DNS/network issues.
+    try {
+      const controller2 = new AbortController();
+      const timer2 = setTimeout(() => controller2.abort(), timeout);
+      await fetch('https://relay.walletconnect.org/', { method: 'GET', mode: 'no-cors', signal: controller2.signal });
+      clearTimeout(timer2);
       return true;
     } catch (err) {
-      clearTimeout(timer);
       return false;
     }
   }
