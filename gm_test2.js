@@ -159,7 +159,18 @@ export function init() {
         }
       }
       if (providerCandidate && typeof providerCandidate.request === 'function') {
-        activeEip1193Provider = providerCandidate;
+        // Some WalletConnect providers may be partially initialized when
+        // returned by modal.getProvider(). The browser-ponyfill error we
+        // observed (`setDefaultChain` of undefined) happens when internal
+        // controller objects are not ready yet. Wait briefly for the
+        // provider to become ready (or detect it's missing the expected API)
+        // and only assign it when ready. Otherwise fall back to injected.
+        const ready = await waitForProviderReady(providerCandidate, 2000);
+        if (ready) {
+          activeEip1193Provider = providerCandidate;
+        } else {
+          console.warn('Provider found but not ready (missing internal API); falling back to injected provider.');
+        }
       }
     } catch (e) {
       console.warn('AppKit provider attempt failed', e);
@@ -432,6 +443,9 @@ export function init() {
       try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
       if (providerCandidate && typeof providerCandidate.request === 'function') {
         try {
+          // Ensure provider is in a usable state before asking for accounts
+          const ready = await waitForProviderReady(providerCandidate, 2000);
+          if (!ready) throw new Error('provider-not-ready');
           const accounts = await providerCandidate.request({ method: 'eth_accounts' });
           if (accounts && accounts.length) {
             activeEip1193Provider = providerCandidate;
