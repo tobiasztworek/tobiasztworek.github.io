@@ -1,669 +1,343 @@
 import { ethers } from 'ethers';
-import { createAppKit } from "@reown/appkit";
-import { EthersAdapter } from "@reown/appkit-adapter-ethers";
-import { baseSepolia, optimismSepolia, sepolia } from "@reown/appkit/networks";
+import { createAppKit } from '@reown/appkit';
+import { EthersAdapter } from '@reown/appkit-adapter-ethers';
+import { baseSepolia, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
-// 1. Get projectId from https://dashboard.reown.com
-//const projectId = "b56e18d47c72ab683b10814fe9495694";
-const projectId = "3a5538ce9969461166625db3fdcbef8c";
-
-// 2. Create your application's metadata object
+// Project config
+const projectId = '3a5538ce9969461166625db3fdcbef8c';
 const metadata = {
-  name: "dApp GM",
-  description: "dApp to say GM on multiple chains",
-  url: "http://tobiasztworek.github.io/", // origin must match your domain & subdomain
-  icons: ["https://avatars.githubusercontent.com/u/179229932"],
+  name: 'dApp GM',
+  description: 'dApp to say GM on multiple chains',
+  url: 'http://tobiasztworek.github.io/',
+  icons: ['https://avatars.githubusercontent.com/u/179229932'],
 };
 
-// 3. AppKit modal will be created lazily by initAppKit() to avoid
-// background WalletConnect relay connections on page load (which can
-// fail on some networks / DNS setups). `modal` starts null and is only
-// constructed when we actually need it (e.g., user presses Connect).
-let modal = null;
+// App state
+let modal = null; // lazy AppKit modal
+let activeEip1193Provider = null; // chosen provider
+let signer = null;
+let networksRendered = false;
 
-// Ensure initAppKit exists for legacy callers. The app previously
-// attempted to call `initAppKit()` on DOMContentLoaded but the
-// function was removed in a refactor which caused a ReferenceError.
-// Provide a safe initializer that is idempotent and performs no-op
-// if AppKit `modal` is already created above.
+// UI elements (populated during init)
+let connectBtn, bannerContainer, networksRow;
+
+// Networks
+const NETWORKS = [
+  {
+    name: 'Base Sepolia',
+    chainId: '0x14a34',
+    contractAddress: '0x714Be7D3D4fB4D52c714b00afFd1F297FD0E023f',
+    rpcUrl: 'https://base-sepolia.rpc.thirdweb.com',
+    explorer: 'https://sepolia.basescan.org/',
+    buttonColor: '#1a46e5',
+    logoUrl: 'img/base.jpg',
+  },
+  {
+    name: 'Ethereum Sepolia',
+    chainId: '0xaa36a7',
+    contractAddress: '0x43ef985e0A520A7331bf93319CE3e676c9FAEbc9',
+    rpcUrl: 'https://rpc.sepolia.org',
+    explorer: 'https://sepolia.etherscan.io/',
+    buttonColor: '#222222',
+    logoUrl: 'img/ether.svg',
+  },
+  {
+    name: 'Optimism Sepolia',
+    chainId: '0xaa37dc',
+    contractAddress: '0x0a56E2E236547575b2db6EF7e872cd49bC91A556',
+    rpcUrl: 'https://optimism-sepolia-public.nodies.app',
+    explorer: 'https://testnet-explorer.optimism.io/',
+    buttonColor: '#FC0C2C',
+    logoUrl: 'img/optimism.svg',
+  },
+];
+
+const GM_ABI = [
+  'function sayGM() external payable',
+  'function getGmFeeInEth() view returns (uint256)',
+  'function getUserSafe(address) view returns (uint256,uint256,bool)',
+];
+
+// ----- AppKit lazy init -----
 export function initAppKit() {
   try {
-    // Lazily create the modal only once. This prevents the AppKit
-    // internals from starting background websocket connections on page
-    // load (which can cause DNS errors on some networks).
     if (modal && typeof modal.open === 'function') return modal;
     modal = createAppKit({
       adapters: [new EthersAdapter()],
       networks: [baseSepolia, optimismSepolia, sepolia],
       metadata,
       projectId,
-      features: {
-        connectMethodsOrder: ["wallet"],
-      },
+      features: { connectMethodsOrder: ['wallet'] },
     });
     return modal;
   } catch (e) {
-    console.error('initAppKit internal error', e);
-  }
-  // Fallback: return null to indicate no modal available
-  return null;
-}
-
-
-export function init() {
-  const NETWORKS = [
-    {
-      name: "Base Sepolia",
-      chainId: "0x14a34",
-      contractAddress: "0x714Be7D3D4fB4D52c714b00afFd1F297FD0E023f",
-      rpcUrl: "https://base-sepolia.rpc.thirdweb.com",
-      explorer: "https://sepolia.basescan.org/",
-      buttonColor: '#1a46e5',
-      logoUrl: "img/base.jpg"
-    },
-    {
-      name: "Ethereum Sepolia",
-      chainId: "0xaa36a7",
-      contractAddress: "0x43ef985e0A520A7331bf93319CE3e676c9FAEbc9",
-      rpcUrl: "https://rpc.sepolia.org",
-      explorer: "https://sepolia.etherscan.io/",
-      buttonColor: "#222222",
-      logoUrl: "img/ether.svg"
-    },
-    {
-      name: "Optimism Sepolia",
-      chainId: "0xaa37dc",
-      contractAddress: "0x0a56E2E236547575b2db6EF7e872cd49bC91A556",
-      rpcUrl: "https://optimism-sepolia-public.nodies.app",
-      explorer: "https://testnet-explorer.optimism.io/",
-      buttonColor: "#FC0C2C",
-      logoUrl: "img/optimism.svg"
-    }
-  ];
-
-  const GM_ABI = [
-    "function sayGM() external payable",
-    "function getGmFeeInEth() view returns (uint256)",
-    "function getUserSafe(address) view returns (uint256,uint256,bool)"
-  ];
-
-  const connectBtn = document.getElementById("connectBtn");
-  const networksRow = document.getElementById("networksRow");
-
-  let signer;
-  // Active EIP-1193 provider (from AppKit/EthersAdapter or injected)
-  let activeEip1193Provider = null;
-  // Track whether network containers have already been rendered to avoid duplicates
-  let networksRendered = false;
-
-  // Render network cards immediately so the interface is visible even when
-  // no wallet is connected. initNetworkContainer is idempotent-guarded below.
-  function renderNetworkUIOnce() {
-    if (networksRendered) return;
-    networksRendered = true;
-    NETWORKS.forEach(net => initNetworkContainer(net));
-  }
-
-  // Render UI now so user sees the app even without wallet
-  renderNetworkUIOnce();
-
-  function getActiveProvider() {
-    if (activeEip1193Provider) return activeEip1193Provider;
-    try {
-      if (modal && typeof modal.getProvider === 'function') {
-        const p = modal.getProvider();
-        if (p) return p;
-      }
-    } catch (e) {}
-    if (typeof window !== 'undefined' && window.ethereum) return window.ethereum;
+    console.error('initAppKit error', e);
     return null;
   }
+}
 
-  async function switchToNetwork(net) {
-    // Try active provider first (AppKit modal provider or injected assigned provider)
-    const p = getActiveProvider();
-    const switchParams = [{ chainId: net.chainId }];
-    const addParams = [{
-      chainId: net.chainId,
-      chainName: net.name,
-      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-      rpcUrls: [net.rpcUrl],
-      blockExplorerUrls: [net.explorer]
-    }];
+// ----- Utilities -----
+function showBanner(message, type = 'info', actions = []) {
+  if (!bannerContainer) return;
+  bannerContainer.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = `alert alert-${type}`;
+  el.style.display = 'flex';
+  el.style.alignItems = 'center';
+  el.style.justifyContent = 'space-between';
+  const span = document.createElement('div');
+  span.textContent = message;
+  el.appendChild(span);
+  const actionsDiv = document.createElement('div');
+  actions.forEach(a => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-primary ms-2';
+    btn.textContent = a.label;
+    btn.addEventListener('click', a.onClick);
+    actionsDiv.appendChild(btn);
+  });
+  el.appendChild(actionsDiv);
+  bannerContainer.appendChild(el);
+}
 
-    if (p && typeof p.request === 'function') {
-      try {
-        await p.request({ method: "wallet_switchEthereumChain", params: switchParams });
-        return true;
-      } catch (err) {
-        // If chain not added, try to add it via the same provider
-        if (err && err.code === 4902) {
-          try {
-            await p.request({ method: "wallet_addEthereumChain", params: addParams });
-            return true;
-          } catch (addErr) {
-            console.warn('Provider add chain failed', addErr);
-          }
-        } else {
-          console.warn('Provider switch failed', err);
-        }
-      }
-    }
+function clearBanner() { if (!bannerContainer) return; bannerContainer.innerHTML = ''; }
 
-    // Fallback to window.ethereum if it's available
-    if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
-      try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: switchParams });
-        return true;
-      } catch (err) {
-        if (err && err.code === 4902) {
-          try {
-            await window.ethereum.request({ method: "wallet_addEthereumChain", params: addParams });
-            return true;
-          } catch (addErr) {
-            console.warn('window.ethereum add chain failed', addErr);
-          }
-        } else {
-          console.warn('window.ethereum switch failed', err);
-        }
-      }
-    }
-
-    // No provider available or all attempts failed — inform the user but don't throw
-    alert('No wallet provider available for network switch. Connect a wallet or switch the network manually in your wallet.');
-    return false;
-  }
-
-  async function connect() {
-    // Try to use AppKit modal provider first
+async function waitForProviderReady(p, timeout = 5000, interval = 300) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
     try {
-      let providerCandidate = null;
-      // Ensure modal is created lazily here. Don't init until we're
-      // ready to attempt connecting (and after relay reachability check).
-      try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
-      if (!providerCandidate) {
-        // Before opening the modal, do a quick reachability check for the
-        // WalletConnect relay. On some mobile networks or DNS setups the
-        // relay host (relay.walletconnect.org) may not resolve which causes
-        // the WebSocket connection to fail and deeper WalletConnect code to
-        // error (e.g., reading setDefaultChain of undefined). Detect that
-        // early and show a helpful message instead of letting low-level
-        // runtime errors surface.
-        let relayOk = true;
-        try {
-          relayOk = await isRelayReachable();
-        } catch (e) {
-          relayOk = false;
-        }
-        if (!relayOk) {
-          // Friendly message for end-user; keep the app usable with injected wallets
-          alert('Nie można połączyć się z serwerem WalletConnect (relay). Sprawdź połączenie sieciowe lub spróbuj innej sieci.');
-        } else {
-          // Create the AppKit modal lazily and open it.
-          try {
-            initAppKit();
-            if (modal && typeof modal.open === 'function') modal.open();
-          } catch(e){}
-        }
-        for (let i = 0; i < 20; i++) {
-          try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
-          if (providerCandidate) break;
-          await new Promise(r => setTimeout(r, 300));
-        }
-      }
-      if (providerCandidate && typeof providerCandidate.request === 'function') {
-        // Some WalletConnect providers may be partially initialized when
-        // returned by modal.getProvider(). The browser-ponyfill error we
-        // observed (`setDefaultChain` of undefined) happens when internal
-        // controller objects are not ready yet. Try a couple of strategies:
-        // 1) Attempt eth_accounts() immediately — if the provider already
-        //    knows the accounts we can use it.
-        // 2) Wait longer for internal readiness before giving up.
-        try {
-          const accountsNow = await providerCandidate.request({ method: 'eth_accounts' }).catch(() => null);
-          if (accountsNow && accountsNow.length) {
-            console.debug('Provider returned accounts immediately via eth_accounts — using it');
-            activeEip1193Provider = providerCandidate;
-          } else {
-            const ready = await waitForProviderReady(providerCandidate, 5000);
-            if (ready) {
-              console.debug('AppKit provider ready — using it');
-              activeEip1193Provider = providerCandidate;
-            } else {
-              console.warn('Provider found but not ready after timeout; attempting eth_accounts() as a fallback.');
-              try {
-                const accounts = await providerCandidate.request({ method: 'eth_accounts' });
-                if (accounts && accounts.length) {
-                  console.debug('Provider returned accounts via eth_accounts after wait — using it');
-                  activeEip1193Provider = providerCandidate;
-                } else {
-                  console.warn('Provider eth_accounts returned no accounts after wait; falling back to injected provider.');
-                }
-              } catch (acctErr) {
-                console.warn('Provider eth_accounts attempt failed after wait, falling back to injected provider.', acctErr);
-              }
-            }
-          }
-        } catch (innerErr) {
-          console.warn('Error probing providerCandidate for accounts/readiness', innerErr);
-        }
-      }
-    } catch (e) {
-      console.warn('AppKit provider attempt failed', e);
-    }
-
-    // Fallback to injected provider
-    if (!getActiveProvider()) {
-      // Mobile deep-link flows (open MetaMask app and return) sometimes
-      // result in the injected provider appearing a short time after the
-      // user starts the connect flow. Wait briefly for window.ethereum to
-      // appear before giving up and showing the install modal message.
-  const injectedAvailable = await waitForInjectedProvider(5000);
-  console.debug('Injected provider available:', injectedAvailable, 'window.ethereum present:', !!(typeof window !== 'undefined' && window.ethereum));
-      if (!injectedAvailable) {
-        // No injected provider detected in time — show friendly hint but
-        // don't throw; user can retry.
-        alert("Install MetaMask or open AppKit modal.");
-      } else {
-        try {
-          await window.ethereum.request({ method: "eth_requestAccounts" });
-          console.debug('Injected provider granted accounts');
-          activeEip1193Provider = window.ethereum;
-        } catch (e) {
-          console.error('eth_requestAccounts failed', e);
-        }
-      }
-    }
-
-  const provider = getEthersProvider();
-  if (!provider) {
-    console.warn('No provider available at finalization step — attempting one last AppKit modal retry');
-    // Try one last time to open the modal and poll for a provider. This
-    // helps mobile deep-link flows where the provider may appear a bit
-    // later or AppKit modal was dismissed prematurely.
-    try {
-      try { modal.open(); } catch (e) { /* ignore */ }
-      let p = null;
-      for (let i = 0; i < 10; i++) {
-        try { p = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
-        if (p) break;
-        await new Promise(r => setTimeout(r, 300));
-      }
-      if (p) {
-        // Try eth_accounts on the provider found during retry
-        try {
-          const acc = await p.request({ method: 'eth_accounts' }).catch(() => null);
-          if (acc && acc.length) {
-            activeEip1193Provider = p;
-          } else {
-            // accept provider object but don't assume accounts — we'll
-            // finalize later via request when needed
-            activeEip1193Provider = p;
-          }
-        } catch (e) {
-          console.debug('Retry provider eth_accounts attempt failed', e);
-        }
-      }
-    } catch (e) {
-      console.debug('Finalization retry attempt failed', e);
-    }
+      if (typeof p.setDefaultChain === 'function') return true;
+      if (typeof p.request === 'function') return true;
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, interval));
   }
-  const providerAfterRetry = getEthersProvider();
-  if (!providerAfterRetry) { console.warn('Still no provider available after retry — aborting finalization'); return; }
-  signer = await providerAfterRetry.getSigner();
-  // Re-render network UI now that signer exists (avoid duplicate rendering)
-  renderNetworkUIOnce();
-  connectBtn.disabled = false; // keep button active
-  connectBtn.textContent = "Connected";
-    NETWORKS.forEach(net => initNetworkContainer(net));
-    await updateAllStats();
-  }
+  return false;
+}
 
-  // Wait for an injected provider (window.ethereum) to appear within the
-  // specified timeout (ms). Returns true if found, false otherwise.
-  function waitForInjectedProvider(timeout = 3000, interval = 200) {
-    return new Promise(resolve => {
-      if (typeof window !== 'undefined' && window.ethereum) return resolve(true);
-      const start = Date.now();
-      const id = setInterval(() => {
-        if (typeof window !== 'undefined' && window.ethereum) {
-          clearInterval(id);
-          return resolve(true);
-        }
-        if (Date.now() - start > timeout) {
-          clearInterval(id);
-          return resolve(false);
-        }
-      }, interval);
-    });
-  }
-
-  // Return an ethers BrowserProvider built from the active provider, or
-  // null if no active provider is available or it's invalid. This prevents
-  // passing null into ethers which throws 'invalid EIP-1193 provider'.
-  function getEthersProvider() {
-    const active = getActiveProvider();
-    if (!active) return null;
-    try {
-      return new ethers.BrowserProvider(active);
-    } catch (e) {
-      console.error('Invalid EIP-1193 provider', e);
-      return null;
-    }
-  }
-
-  // Check reachability of the WalletConnect relay endpoint. A failed DNS
-  // resolution will cause the relay websocket to throw net::ERR_NAME_NOT_RESOLVED
-  // and cascade into uncaught errors inside walletconnect libraries. This
-  // function performs a small fetch with timeout to detect that condition.
-  async function isRelayReachable(timeout = 3000) {
-    // Primary: use DNS-over-HTTPS to check whether relay.walletconnect.org resolves.
-    // This avoids making requests directly to the relay HTTP endpoint which can
-    // return 405 Method Not Allowed. Google DoH returns JSON and supports CORS.
+async function isRelayReachable(timeout = 3000) {
+  try {
     const doh = `https://dns.google/resolve?name=relay.walletconnect.org&type=A`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
-    try {
-      const res = await fetch(doh, { method: 'GET', signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) return false;
-      const j = await res.json();
-      // If there are Answers, the host resolves
-      if (j && (j.Answer && j.Answer.length > 0)) return true;
-    } catch (err) {
-      // fall through to fallback
-      clearTimeout(timer);
-    }
-
-    // Fallback: try a direct GET to the relay root. Some environments will
-    // return 405 for HEAD; using GET with no-cors may still fail but we'll
-    // use it as a last resort to detect DNS/network issues.
-    try {
-      const controller2 = new AbortController();
-      const timer2 = setTimeout(() => controller2.abort(), timeout);
-      await fetch('https://relay.walletconnect.org/', { method: 'GET', mode: 'no-cors', signal: controller2.signal });
-      clearTimeout(timer2);
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  function disconnect() {
-    signer = null;
-    networksRow.innerHTML = "";
-    connectBtn.disabled = false;
-    connectBtn.textContent = "Connect MetaMask";
-  }
-
-  function initNetworkContainer(net) {
-    // Idempotency guard: if we've already created a card for this chain, skip.
-    try {
-      if (networksRow.querySelector(`.status-card[data-chain="${net.chainId}"]`)) return;
-    } catch (e) {
-      // defensive: if networksRow isn't available for some reason, continue
-    }
-    const col = document.createElement("div");
-    col.className = "col-12 col-md-6";
-
-    const container = document.createElement("div");
-    container.className = "status-card";
-    container.dataset.chain = net.chainId;
-    container.innerHTML = `
-      <h2 class="d-flex align-items-center justify-content-between">
-        <div>
-          <img src="${net.logoUrl}" width="50" height="50" class="imgLogo me-2 rounded">
-          ${net.name}
-        </div>
-        <button class="addBtn btn btn-sm btn-light addNetworkBtn"
-          style="border: none;">
-          🦊 Add Chain
-        </button>
-      </h2>
-      <div class="mb-3">
-        <div><strong>Status:</strong> <span class="statusText">—</span></div>
-        <div><strong>GM Fee:</strong> <span class="feeEth">—</span> ETH</div>
-        <div><strong>🔥 Streak:</strong> <span class="streak">—</span> dni</div>
-        <div><strong>💬 Total GM:</strong> <span class="totalGm">—</span></div>
-      </div>
-      <div class="d-flex gap-2 mb-2">
-        <button class="fetchFeeBtn btn btn-secondary flex-fill">Calculate fee</button>
-        <button class="sayGmBtn btn btn-secondary flex-fill">Say GM ☀️</button>
-      </div>
-      <div class="txStatus">—</div>
-    `;
-    col.appendChild(container);
-    networksRow.appendChild(col);
-
-    const fetchFeeBtn = container.querySelector(".fetchFeeBtn");
-    const sayGmBtn = container.querySelector(".sayGmBtn");
-    const statusText = container.querySelector(".statusText");
-    const feeEthText = container.querySelector(".feeEth");
-    const streakText = container.querySelector(".streak");
-    const totalGmText = container.querySelector(".totalGm");
-    const txStatus = container.querySelector(".txStatus");
-    const addBtn = container.querySelector(".addBtn");
-
-    fetchFeeBtn.style.backgroundColor = net.buttonColor;
-    sayGmBtn.style.backgroundColor = net.buttonColor;
-
-    let contract;
-    
-    addBtn.addEventListener("click", async () => {
-      try {
-        await addNetworkById(parseInt(net.chainId, 16));
-      } catch (e) {
-        console.error(e);
-        alert("Error adding network");
-      }
-    });
-
-    fetchFeeBtn.addEventListener("click", async () => {
-      try {
-    statusText.textContent = "Fee colculation...";
-    await switchToNetwork(net);
-    const provider = getEthersProvider();
-    if (!provider) { statusText.textContent = 'No provider'; return; }
-    const signer = await provider.getSigner();
-        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        const feeWei = await contract.getGmFeeInEth();
-        feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
-        statusText.textContent = "Fee calculated ✅";
-      } catch (e) {
-        console.error(e);
-        statusText.textContent = "Error in fee calculation";
-      }
-    });
-
-    sayGmBtn.addEventListener("click", async () => {
-      try {
-        sayGmBtn.disabled = true;
-        statusText.textContent = "Preparing transaction...";
-    await switchToNetwork(net);
-    const provider = getEthersProvider();
-    if (!provider) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; return; }
-    const signer = await provider.getSigner();
-        contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        const feeWei = await contract.getGmFeeInEth();
-        const tx = await contract.sayGM({ value: feeWei });
-        txStatus.textContent = "Tx sent: " + tx.hash;
-        await tx.wait();
-        statusText.textContent = "GM completed successfully ☀️";
-        txStatus.textContent = "Confirmed: " + tx.hash;
-        const user = await contract.getUserSafe(await signer.getAddress());
-        streakText.textContent = user[0];
-        totalGmText.textContent = user[1];
-      } catch (e) {
-        console.error(e);
-        statusText.textContent = "Error in transaction";
-      } finally {
-        sayGmBtn.disabled = false;
-      }
-    });
-  }
-
-  async function updateAllStats() {
-    if (!signer) return;
-
-    for (const net of NETWORKS) {
-      const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
-      if (!container) continue;
-
-      const streakText = container.querySelector(".streak");
-      const totalGmText = container.querySelector(".totalGm");
-      const statusText = container.querySelector(".statusText");
-
-      try {
-        statusText.textContent = "Gathering stats...";
-    await switchToNetwork(net);
-    const provider = getEthersProvider();
-    if (!provider) { statusText.textContent = 'No provider'; continue; }
-    const signer = await provider.getSigner();
-        const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
-        const user = await contract.getUserSafe(await signer.getAddress());
-        streakText.textContent = user[0];
-        totalGmText.textContent = user[1];
-        statusText.textContent = "Stats gathered ✅";
-      } catch (e) {
-        console.error(`Error gathering stats for ${net.name}:`, e);
-        streakText.textContent = "—";
-        totalGmText.textContent = "—";
-        statusText.textContent = "Error gathering stats";
-      }
-    }
-  }
-
-  async function getNetworkConfig(chainId) {
-    try {
-      const response = await fetch("https://chainid.network/chains.json");
-      const allChains = await response.json();
-      const chain = allChains.find(c => c.chainId === chainId);
-      if (!chain) {
-        throw new Error("Sieć nieznaleziona w Chainlist");
-      }
-
-      return {
-        chainId: "0x" + chain.chainId.toString(16),
-        chainName: chain.name,
-        rpcUrls: chain.rpc,
-        nativeCurrency: chain.nativeCurrency,
-        blockExplorerUrls: chain.explorers?.map(e => e.url) || []
-      };
-    } catch (err) {
-      console.error("Błąd pobierania sieci:", err);
-      return null;
-    }
-  }
-
-  async function addNetworkById(chainId) {
-    const network = await getNetworkConfig(chainId);
-    if (!network) return alert("Nie można pobrać danych sieci");
-
-    await window.ethereum.request({
-      method: "wallet_addEthereumChain",
-      params: [network]
-    });
-  }
-
-
-  connectBtn.addEventListener("click", connect);
-
-  // Attempt to restore an existing wallet connection on page reload.
-  // Checks AppKit modal provider first, then falls back to injected provider.
-  async function tryRestoreConnection() {
-    try {
-      // Check AppKit provider
-      let providerCandidate = null;
-      try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
-      if (providerCandidate && typeof providerCandidate.request === 'function') {
-        try {
-          // Ensure provider is in a usable state before asking for accounts
-          const ready = await waitForProviderReady(providerCandidate, 2000);
-          if (!ready) throw new Error('provider-not-ready');
-          const accounts = await providerCandidate.request({ method: 'eth_accounts' });
-          if (accounts && accounts.length) {
-            activeEip1193Provider = providerCandidate;
-            const provider = getEthersProvider();
-            if (!provider) return false;
-            signer = await provider.getSigner();
-            connectBtn.disabled = false; // keep button active
-            connectBtn.textContent = "Connected";
-            NETWORKS.forEach(net => initNetworkContainer(net));
-            await updateAllStats();
-            return true;
-          }
-        } catch (e) {
-          console.debug('AppKit provider eth_accounts check failed', e);
-        }
-      }
-
-      // Fallback: check injected provider (e.g., MetaMask)
-      if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
-        try {
-          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-          if (accounts && accounts.length) {
-            activeEip1193Provider = window.ethereum;
-            const provider = getEthersProvider();
-            if (!provider) return false;
-            signer = await provider.getSigner();
-            connectBtn.disabled = false;
-            connectBtn.textContent = "Connected";
-            NETWORKS.forEach(net => initNetworkContainer(net));
-            await updateAllStats();
-            return true;
-          }
-        } catch (e) {
-          console.debug('Injected provider eth_accounts check failed', e);
-        }
-      }
-    } catch (e) {
-      console.error('Error restoring connection', e);
-    }
-    return false;
-  }
-
-  // Try to restore connection but don't block initialization if it fails
-  tryRestoreConnection().catch(e => console.error('restore connection failed', e));
-
-  // On mobile, returning from an external wallet app (MetaMask) via deep-link
-  // often doesn't inject window.ethereum until the tab regains focus or
-  // visibility. Listen for visibility/focus events and attempt to finalize
-  // connection automatically. Placed inside init() so it can access scoped
-  // variables like activeEip1193Provider, signer and the connect/disconnect buttons.
-  async function tryFinalizeInjectedOnResume() {
-    try {
-      if (typeof window === 'undefined') return;
-      if (!window.document) return;
-      if (document.visibilityState === 'visible' || document.hasFocus()) {
-        // Try to detect injected provider quickly
-        const present = !!window.ethereum;
-        console.debug('Resume check - injected present:', present);
-        if (present && !activeEip1193Provider) {
-          try {
-            // Request accounts to trigger MetaMask's injection/permissions if needed
-            await window.ethereum.request({ method: 'eth_requestAccounts' });
-            activeEip1193Provider = window.ethereum;
-            // finalize signer and UI
-            const provider = getEthersProvider();
-            if (provider) {
-              signer = await provider.getSigner();
-              connectBtn.disabled = false;
-              connectBtn.textContent = 'Connected';
-              renderNetworkUIOnce();
-              await updateAllStats();
-            }
-          } catch (e) {
-            console.debug('Resume injected finalization failed', e);
-          }
-        }
-      }
-    } catch (e) { console.error('resume handler error', e); }
-  }
-
-  window.addEventListener('visibilitychange', () => { tryFinalizeInjectedOnResume(); });
-  window.addEventListener('focus', () => { tryFinalizeInjectedOnResume(); });
+    const res = await fetch(doh, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    const j = await res.json();
+    if (j && j.Answer && j.Answer.length) return true;
+  } catch (e) {}
+  try {
+    const controller2 = new AbortController();
+    const timer2 = setTimeout(() => controller2.abort(), timeout);
+    await fetch('https://relay.walletconnect.org/', { method: 'GET', mode: 'no-cors', signal: controller2.signal });
+    clearTimeout(timer2);
+    return true;
+  } catch (e) { return false; }
 }
 
+function getActiveProvider() {
+  if (activeEip1193Provider) return activeEip1193Provider;
+  try { if (modal && typeof modal.getProvider === 'function') { const p = modal.getProvider(); if (p) return p; } } catch (e) {}
+  if (typeof window !== 'undefined' && window.ethereum) return window.ethereum;
+  return null;
+}
+
+function getEthersProvider() {
+  const p = getActiveProvider();
+  if (!p) return null;
+  try { return new ethers.BrowserProvider(p); } catch (e) { console.error('Invalid EIP-1193 provider', e); return null; }
+}
+
+// Small helper to ask the user's wallet to add a chain (used by the "Add Chain" button)
+async function addNetworkById(chainId) {
+  const net = NETWORKS.find(n => parseInt(n.chainId, 16) === chainId);
+  if (!net) return false;
+  const p = getActiveProvider() || (typeof window !== 'undefined' && window.ethereum) || null;
+  if (!p || typeof p.request !== 'function') { showBanner('No provider available to add network', 'warning'); return false; }
+  const addParams = {
+    chainId: net.chainId,
+    chainName: net.name,
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    rpcUrls: [net.rpcUrl],
+    blockExplorerUrls: [net.explorer],
+  };
+  try {
+    await p.request({ method: 'wallet_addEthereumChain', params: [addParams] });
+    return true;
+  } catch (e) {
+    console.warn('addNetworkById failed', e);
+    return false;
+  }
+}
+
+// ----- UI rendering -----
+function renderNetworkUIOnce() { if (networksRendered) return; networksRendered = true; NETWORKS.forEach(renderNetworkCard); }
+
+function renderNetworkCard(net) {
+  if (!networksRow) return;
+  if (networksRow.querySelector(`.status-card[data-chain="${net.chainId}"]`)) return;
+  const col = document.createElement('div'); col.className = 'col-12 col-md-6';
+  const container = document.createElement('div'); container.className = 'status-card'; container.dataset.chain = net.chainId;
+  container.innerHTML = `
+    <h2 class="d-flex align-items-center justify-content-between">
+      <div>
+        <img src="${net.logoUrl}" width="50" height="50" class="imgLogo me-2 rounded">
+        ${net.name}
+      </div>
+      <button class="addBtn btn btn-sm btn-light addNetworkBtn" style="border: none;">🦊 Add Chain</button>
+    </h2>
+    <div class="mb-3">
+      <div><strong>Status:</strong> <span class="statusText">—</span></div>
+      <div><strong>GM Fee:</strong> <span class="feeEth">—</span> ETH</div>
+      <div><strong>🔥 Streak:</strong> <span class="streak">—</span> dni</div>
+      <div><strong>💬 Total GM:</strong> <span class="totalGm">—</span></div>
+    </div>
+    <div class="d-flex gap-2 mb-2">
+      <button class="fetchFeeBtn btn btn-secondary flex-fill">Calculate fee</button>
+      <button class="sayGmBtn btn btn-secondary flex-fill">Say GM ☀️</button>
+    </div>
+    <div class="txStatus">—</div>
+  `;
+  col.appendChild(container); networksRow.appendChild(col);
+  const fetchFeeBtn = container.querySelector('.fetchFeeBtn');
+  const sayGmBtn = container.querySelector('.sayGmBtn');
+  const statusText = container.querySelector('.statusText');
+  const feeEthText = container.querySelector('.feeEth');
+  const streakText = container.querySelector('.streak');
+  const totalGmText = container.querySelector('.totalGm');
+  const txStatus = container.querySelector('.txStatus');
+  const addBtn = container.querySelector('.addBtn');
+  fetchFeeBtn.style.backgroundColor = net.buttonColor; sayGmBtn.style.backgroundColor = net.buttonColor;
+  addBtn.addEventListener('click', async () => { try { await addNetworkById(parseInt(net.chainId, 16)); } catch (e) { console.error(e); showBanner('Error adding network', 'danger'); } });
+  fetchFeeBtn.addEventListener('click', async () => {
+    try {
+      statusText.textContent = 'Fee calculation...';
+      const ok = await switchToNetwork(net);
+      if (!ok) { statusText.textContent = 'No provider'; return; }
+      const provider = getEthersProvider();
+      if (!provider) { statusText.textContent = 'No provider'; return; }
+      const s = await provider.getSigner();
+      const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
+      const feeWei = await contract.getGmFeeInEth();
+      feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
+      statusText.textContent = 'Fee calculated ✅';
+    } catch (e) {
+      console.error(e);
+      statusText.textContent = 'Error in fee calculation';
+    }
+  });
+  sayGmBtn.addEventListener('click', async () => {
+    try {
+      sayGmBtn.disabled = true;
+      statusText.textContent = 'Preparing transaction...';
+      const ok = await switchToNetwork(net);
+      if (!ok) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; return; }
+      const provider = getEthersProvider();
+      if (!provider) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; return; }
+      const s = await provider.getSigner();
+      const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
+      const feeWei = await contract.getGmFeeInEth();
+      const tx = await contract.sayGM({ value: feeWei });
+      txStatus.textContent = 'Tx sent: ' + tx.hash;
+      await tx.wait();
+      statusText.textContent = 'GM completed successfully ☀️';
+      txStatus.textContent = 'Confirmed: ' + tx.hash;
+      const user = await contract.getUserSafe(await s.getAddress());
+      streakText.textContent = user[0];
+      totalGmText.textContent = user[1];
+    } catch (e) {
+      console.error(e);
+      statusText.textContent = 'Error in transaction';
+    } finally {
+      sayGmBtn.disabled = false;
+    }
+  });
+}
+
+// ----- network switching -----
+async function switchToNetwork(net) {
+  const p = getActiveProvider();
+  const params = [{ chainId: net.chainId }];
+  const addParams = [{ chainId: net.chainId, chainName: net.name, nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: [net.rpcUrl], blockExplorerUrls: [net.explorer] }];
+  if (p && typeof p.request === 'function') {
+    try { await p.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await p.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('addChain failed', e); } } else { console.warn('provider switch failed', err); } }
+  }
+  if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
+    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('window addChain failed', e); } } else { console.warn('window switch failed', err); } }
+  }
+  showBanner('No wallet provider available for network switch. Connect a wallet or switch the network manually in your wallet.', 'warning', [ { label: 'Connect', onClick: () => connect() } ]);
+  return false;
+}
+
+// ----- connect / restore -----
+async function connect() {
+  const relayOk = await isRelayReachable().catch(() => false);
+  if (!relayOk) {
+    showBanner('WalletConnect relay unreachable — try connecting with an injected wallet or check your network.', 'warning', [ { label: 'Use injected', onClick: () => tryUseInjectedNow() }, { label: 'Retry', onClick: () => connect() } ]);
+  } else {
+    try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.debug('modal.open failed', e); }
+  }
+  let providerCandidate = null;
+  for (let i = 0; i < 20; i++) { try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch (e) { providerCandidate = null; } if (providerCandidate) break; await new Promise(r => setTimeout(r, 300)); }
+  if (providerCandidate && typeof providerCandidate.request === 'function') {
+    try { const accounts = await providerCandidate.request({ method: 'eth_accounts' }).catch(() => null); if (accounts && accounts.length) { activeEip1193Provider = providerCandidate; } else { const ready = await waitForProviderReady(providerCandidate, 5000); if (ready) activeEip1193Provider = providerCandidate; } } catch (e) { console.warn('providerCandidate probe failed', e); }
+  }
+  if (!getActiveProvider()) {
+    const injectedFound = await waitForInjectedProvider(5000);
+    if (!injectedFound) { showBanner('No injected wallet detected. Open AppKit modal to connect or install MetaMask.', 'warning', [ { label: 'Open modal', onClick: () => { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } } ]); return; }
+    try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { console.warn('eth_requestAccounts failed', e); }
+  }
+  const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
+  signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats();
+}
+
+async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
+
+async function tryRestoreConnection() {
+  try {
+    if (modal && typeof modal.getProvider === 'function') {
+      const p = modal.getProvider();
+      if (p && typeof p.request === 'function') {
+        try { const ready = await waitForProviderReady(p, 2000); if (ready) { const accounts = await p.request({ method: 'eth_accounts' }).catch(() => []); if (accounts && accounts.length) { activeEip1193Provider = p; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; renderNetworkUIOnce(); await updateAllStats(); return true; } } } catch (e) { console.debug('modal restore failed', e); }
+      }
+    }
+    if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') { try { const accounts = await window.ethereum.request({ method: 'eth_accounts' }); if (accounts && accounts.length) { activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; renderNetworkUIOnce(); await updateAllStats(); return true; } } catch (e) { console.debug('injected restore failed', e); } }
+  } catch (e) { console.error('restore connection error', e); }
+  return false;
+}
+
+// ----- helpers -----
+function waitForInjectedProvider(timeout = 3000, interval = 200) { return new Promise(resolve => { if (typeof window !== 'undefined' && window.ethereum) return resolve(true); const start = Date.now(); const id = setInterval(() => { if (typeof window !== 'undefined' && window.ethereum) { clearInterval(id); return resolve(true); } if (Date.now() - start > timeout) { clearInterval(id); return resolve(false); } }, interval); }); }
+
+// ----- update UI / stats -----
+async function updateAllStats() {
+  const p = getEthersProvider(); if (!p || !signer) return;
+  for (const net of NETWORKS) {
+    const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
+    if (!container) continue;
+    const statusText = container.querySelector('.statusText');
+    const streakText = container.querySelector('.streak');
+    const totalGmText = container.querySelector('.totalGm');
+    try { statusText.textContent = 'Gathering stats...'; await switchToNetwork(net); const prov = getEthersProvider(); if (!prov) { statusText.textContent = 'No provider'; continue; } const s = await prov.getSigner(); const contract = new ethers.Contract(net.contractAddress, GM_ABI, s); const user = await contract.getUserSafe(await s.getAddress()); streakText.textContent = user[0]; totalGmText.textContent = user[1]; statusText.textContent = 'Stats gathered ✅'; } catch (e) { console.error(`Error gathering stats for ${net.name}:`, e); streakText.textContent = '—'; totalGmText.textContent = '—'; statusText.textContent = 'Error gathering stats'; }
+  }
+}
+
+// ----- global error suppression for noisy WC internals -----
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', ev => {
+    try { const reasonStr = (ev.reason && (ev.reason.stack || ev.reason.message || String(ev.reason))) || ''; if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js')) { try { ev.preventDefault(); } catch (e) {} console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)'); return; } if (reasonStr.includes('No matching key') || reasonStr.includes("session topic doesn't exist")) { try { ev.preventDefault(); } catch (e) {} console.warn('Suppressed WalletConnect session-topic error'); return; } } catch (e) {}
+  });
+  window.addEventListener('error', ev => {
+    try { const msg = ev && (ev.error && (ev.error.stack || ev.error.message) || ev.message || ''); const msgStr = String(msg || ''); if (msgStr.includes('setDefaultChain') || msgStr.includes('browser-ponyfill.js')) { try { ev.preventDefault(); } catch (e) {} console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)'); return; } console.error('Global error:', ev.error || ev.message, ev); } catch (e) {}
+  });
+}
+
+// ----- initialization -----
+export function init() {
+  connectBtn = document.getElementById('connectBtn'); networksRow = document.getElementById('networksRow'); bannerContainer = document.createElement('div'); bannerContainer.style.margin = '12px 0'; const header = document.querySelector('header'); if (header) header.appendChild(bannerContainer);
+  connectBtn.addEventListener('click', () => connect()); renderNetworkUIOnce(); tryRestoreConnection().catch(e => console.error('restore failed', e));
+}
+
+if (typeof window !== 'undefined') { window.addEventListener('DOMContentLoaded', () => { try { init(); } catch (e) { console.error('init error', e); } }); }
 // Auto-initialize when loaded in browser
 if (typeof window !== 'undefined') {
   // Global diagnostics: surface unhandled rejections and errors so we can
