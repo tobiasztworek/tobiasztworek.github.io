@@ -1,29 +1,49 @@
 import { ethers } from 'ethers';
 import { createAppKit } from "@reown/appkit";
 import { EthersAdapter } from "@reown/appkit-adapter-ethers";
-import { mainnet, arbitrum } from "@reown/appkit/networks";
+import { baseSepolia, optimismSepolia, sepolia } from "@reown/appkit/networks";
 
 // 1. Get projectId from https://dashboard.reown.com
-const projectId = "b56e18d47c72ab683b10814fe9495694";
+//const projectId = "b56e18d47c72ab683b10814fe9495694";
+const projectId = "3a5538ce9969461166625db3fdcbef8c";
 
 // 2. Create your application's metadata object
 const metadata = {
-  name: "AppKit",
-  description: "AppKit Example",
-  url: "https://reown.com/appkit", // origin must match your domain & subdomain
+  name: "dApp GM",
+  description: "dApp to say GM on multiple chains",
+  url: "http://web/", // origin must match your domain & subdomain
   icons: ["https://avatars.githubusercontent.com/u/179229932"],
 };
 
 // 3. Create a AppKit instance
 const modal = createAppKit({
   adapters: [new EthersAdapter()],
-  networks: [mainnet, arbitrum],
+  networks: [baseSepolia, optimismSepolia, sepolia],
   metadata,
   projectId,
   features: {
-    analytics: true, // Optional - defaults to your Cloud configuration
+    connectMethodsOrder: ["wallet"],
   },
 });
+
+// Ensure initAppKit exists for legacy callers. The app previously
+// attempted to call `initAppKit()` on DOMContentLoaded but the
+// function was removed in a refactor which caused a ReferenceError.
+// Provide a safe initializer that is idempotent and performs no-op
+// if AppKit `modal` is already created above.
+export function initAppKit() {
+  try {
+    // modal is already created synchronously above; ensure it's usable
+    if (modal && typeof modal.open === 'function') {
+      // No heavy work here. Consumers can call modal.open() later.
+      return modal;
+    }
+  } catch (e) {
+    console.error('initAppKit internal error', e);
+  }
+  // Fallback: return null to indicate no modal available
+  return null;
+}
 
 
 export function init() {
@@ -68,13 +88,29 @@ export function init() {
   const networksRow = document.getElementById("networksRow");
 
   let signer;
+  // Active EIP-1193 provider (from AppKit/EthersAdapter or injected)
+  let activeEip1193Provider = null;
+
+  function getActiveProvider() {
+    if (activeEip1193Provider) return activeEip1193Provider;
+    try {
+      if (modal && typeof modal.getProvider === 'function') {
+        const p = modal.getProvider();
+        if (p) return p;
+      }
+    } catch (e) {}
+    if (typeof window !== 'undefined' && window.ethereum) return window.ethereum;
+    return null;
+  }
 
   async function switchToNetwork(net) {
     try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: net.chainId }]
-      });
+      const p = getActiveProvider();
+      if (p && typeof p.request === 'function') {
+        await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: net.chainId }] });
+      } else {
+        throw new Error('No provider available for network switch');
+      }
     } catch (err) {
       if (err.code === 4902) {
         await window.ethereum.request({
@@ -92,9 +128,33 @@ export function init() {
   }
 
   async function connect() {
-    if (!window.ethereum) return alert("Install MetaMask.");
-    await window.ethereum.request({ method: "eth_requestAccounts" });
-    const provider = new ethers.BrowserProvider(window.ethereum);
+    // Try to use AppKit modal provider first
+    try {
+      let providerCandidate = null;
+      try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
+      if (!providerCandidate) {
+        try { modal.open(); } catch(e){}
+        for (let i = 0; i < 20; i++) {
+          try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
+          if (providerCandidate) break;
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      if (providerCandidate && typeof providerCandidate.request === 'function') {
+        activeEip1193Provider = providerCandidate;
+      }
+    } catch (e) {
+      console.warn('AppKit provider attempt failed', e);
+    }
+
+    // Fallback to injected provider
+    if (!getActiveProvider()) {
+      if (!window.ethereum) return alert("Install MetaMask or open AppKit modal.");
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      activeEip1193Provider = window.ethereum;
+    }
+
+    const provider = new ethers.BrowserProvider(getActiveProvider());
     signer = await provider.getSigner();
     connectBtn.disabled = true;
     connectBtn.textContent = "Connected";
@@ -171,7 +231,7 @@ export function init() {
       try {
         statusText.textContent = "Fee colculation...";
         await switchToNetwork(net);
-        const provider = new ethers.BrowserProvider(window.ethereum);
+  const provider = new ethers.BrowserProvider(getActiveProvider());
         const signer = await provider.getSigner();
         contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const feeWei = await contract.getGmFeeInEth();
@@ -188,7 +248,7 @@ export function init() {
         sayGmBtn.disabled = true;
         statusText.textContent = "Preparing transaction...";
         await switchToNetwork(net);
-        const provider = new ethers.BrowserProvider(window.ethereum);
+  const provider = new ethers.BrowserProvider(getActiveProvider());
         const signer = await provider.getSigner();
         contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const feeWei = await contract.getGmFeeInEth();
@@ -223,7 +283,7 @@ export function init() {
       try {
         statusText.textContent = "Gathering stats...";
         await switchToNetwork(net);
-        const provider = new ethers.BrowserProvider(window.ethereum);
+  const provider = new ethers.BrowserProvider(getActiveProvider());
         const signer = await provider.getSigner();
         const contract = new ethers.Contract(net.contractAddress, GM_ABI, signer);
         const user = await contract.getUserSafe(await signer.getAddress());
@@ -274,6 +334,60 @@ export function init() {
 
   connectBtn.addEventListener("click", connect);
   disconnectBtn.addEventListener("click", disconnect);
+
+  // Attempt to restore an existing wallet connection on page reload.
+  // Checks AppKit modal provider first, then falls back to injected provider.
+  async function tryRestoreConnection() {
+    try {
+      // Check AppKit provider
+      let providerCandidate = null;
+      try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
+      if (providerCandidate && typeof providerCandidate.request === 'function') {
+        try {
+          const accounts = await providerCandidate.request({ method: 'eth_accounts' });
+          if (accounts && accounts.length) {
+            activeEip1193Provider = providerCandidate;
+            const provider = new ethers.BrowserProvider(getActiveProvider());
+            signer = await provider.getSigner();
+            connectBtn.disabled = true;
+            connectBtn.textContent = "Connected";
+            disconnectBtn.disabled = false;
+            NETWORKS.forEach(net => initNetworkContainer(net));
+            await updateAllStats();
+            return true;
+          }
+        } catch (e) {
+          console.debug('AppKit provider eth_accounts check failed', e);
+        }
+      }
+
+      // Fallback: check injected provider (e.g., MetaMask)
+      if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          if (accounts && accounts.length) {
+            activeEip1193Provider = window.ethereum;
+            const provider = new ethers.BrowserProvider(getActiveProvider());
+            signer = await provider.getSigner();
+            connectBtn.disabled = true;
+            connectBtn.textContent = "Connected";
+            disconnectBtn.disabled = false;
+            NETWORKS.forEach(net => initNetworkContainer(net));
+            await updateAllStats();
+            return true;
+          }
+        } catch (e) {
+          console.debug('Injected provider eth_accounts check failed', e);
+        }
+      }
+    } catch (e) {
+      console.error('Error restoring connection', e);
+    }
+    return false;
+  }
+
+  // Try to restore connection but don't block initialization if it fails
+  tryRestoreConnection().catch(e => console.error('restore connection failed', e));
 }
 
 // Auto-initialize when loaded in browser
