@@ -276,10 +276,20 @@ async function connect() {
   } else {
     try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.debug('modal.open failed', e); }
   }
+  // Try to finalize the provider returned by the modal. This may require
+  // user interaction in the external wallet (mobile deep-link), so we poll
+  // and also retry on visibility/focus when the user returns to the page.
   let providerCandidate = null;
-  for (let i = 0; i < 20; i++) { try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch (e) { providerCandidate = null; } if (providerCandidate) break; await new Promise(r => setTimeout(r, 300)); }
+  for (let i = 0; i < 40; i++) { // longer wait (40*300ms = 12s)
+    try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch (e) { providerCandidate = null; }
+    if (providerCandidate) break;
+    await new Promise(r => setTimeout(r, 300));
+  }
   if (providerCandidate && typeof providerCandidate.request === 'function') {
-    try { const accounts = await providerCandidate.request({ method: 'eth_accounts' }).catch(() => null); if (accounts && accounts.length) { activeEip1193Provider = providerCandidate; } else { const ready = await waitForProviderReady(providerCandidate, 5000); if (ready) activeEip1193Provider = providerCandidate; } } catch (e) { console.warn('providerCandidate probe failed', e); }
+    try {
+      const finalized = await finalizeModalProvider(providerCandidate).catch(() => false);
+      if (finalized) activeEip1193Provider = providerCandidate;
+    } catch (e) { console.warn('providerCandidate probe failed', e); }
   }
   if (!getActiveProvider()) {
     const injectedFound = await waitForInjectedProvider(5000);
@@ -289,6 +299,96 @@ async function connect() {
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
   signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats();
 }
+
+// Attempt to finalize a modal-provided provider: check eth_accounts, wait for readiness,
+// and try eth_requestAccounts as a fallback. Returns true if provider looks usable.
+async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
+  if (!p || typeof p.request !== 'function') return false;
+  try {
+    // quick accounts probe
+    const accounts = await p.request({ method: 'eth_accounts' }).catch((err) => {
+      // WalletConnect session-topic missing-key error: surface a reconnect CTA
+      try {
+        const msg = err && (err.message || String(err)) || '';
+        if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
+          showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+        }
+      } catch (e) {}
+      return null;
+    });
+    if (accounts && accounts.length) return true;
+
+    // wait for provider to become ready (adapter initialization)
+    const ready = await waitForProviderReady(p, Math.max(5000, opts.timeout));
+    if (ready) {
+      const accounts2 = await p.request({ method: 'eth_accounts' }).catch((err) => {
+        try {
+          const msg = err && (err.message || String(err)) || '';
+          if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
+            showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          }
+        } catch (e) {}
+        return null;
+      });
+      if (accounts2 && accounts2.length) return true;
+    }
+
+    // last resort: request accounts which may prompt the external wallet
+    try {
+      await p.request({ method: 'eth_requestAccounts' });
+      const accounts3 = await p.request({ method: 'eth_accounts' }).catch((err) => {
+        try {
+          const msg = err && (err.message || String(err)) || '';
+          if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
+            showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          }
+        } catch (e) {}
+        return null;
+      });
+      if (accounts3 && accounts3.length) return true;
+    } catch (e) {
+      // user may need to confirm in external app — return false so we can retry later
+      const msg = e && (e.message || String(e)) || '';
+      if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
+        showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (ee) { console.warn(ee); } } } ]);
+      }
+      return false;
+    }
+  } catch (e) {
+    console.debug('finalizeModalProvider error', e);
+    return false;
+  }
+  return false;
+}
+
+// When returning from an external wallet (mobile deep-link), try finalizing modal provider
+function setupResumeHandlers() {
+  const attempt = async () => {
+    try {
+      if (!modal) return;
+      const p = modal.getProvider && modal.getProvider();
+      if (p && !activeEip1193Provider) {
+        const ok = await finalizeModalProvider(p).catch(() => false);
+        if (ok) {
+          activeEip1193Provider = p;
+          const provider = getEthersProvider();
+          if (provider) {
+            signer = await provider.getSigner();
+            connectBtn.textContent = 'Connected';
+            clearBanner();
+            renderNetworkUIOnce();
+            await updateAllStats();
+          }
+        }
+      }
+    } catch (e) { console.debug('resume attempt failed', e); }
+  };
+  window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') attempt(); });
+  window.addEventListener('focus', () => { attempt(); });
+}
+
+// ensure resume handlers are installed once
+try { setupResumeHandlers(); } catch (e) {}
 
 async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
