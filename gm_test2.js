@@ -223,7 +223,18 @@ export function init() {
           console.debug('AppKit provider ready — using it');
           activeEip1193Provider = providerCandidate;
         } else {
-          console.warn('Provider found but not ready (missing internal API); falling back to injected provider.');
+          console.warn('Provider found but not ready (missing internal API); attempting eth_accounts() as a fallback.');
+          try {
+            const accounts = await providerCandidate.request({ method: 'eth_accounts' });
+            if (accounts && accounts.length) {
+              console.debug('Provider returned accounts via eth_accounts — using it');
+              activeEip1193Provider = providerCandidate;
+            } else {
+              console.warn('Provider eth_accounts returned no accounts; falling back to injected provider.');
+            }
+          } catch (acctErr) {
+            console.warn('Provider eth_accounts attempt failed, falling back to injected provider.', acctErr);
+          }
         }
       }
     } catch (e) {
@@ -276,7 +287,7 @@ export function init() {
   }
   const providerAfterRetry = getEthersProvider();
   if (!providerAfterRetry) { console.warn('Still no provider available after retry — aborting finalization'); return; }
-  signer = await provider.getSigner();
+  signer = await providerAfterRetry.getSigner();
   // Re-render network UI now that signer exists (avoid duplicate rendering)
   renderNetworkUIOnce();
   connectBtn.disabled = false; // keep button active
