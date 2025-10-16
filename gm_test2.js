@@ -15,16 +15,11 @@ const metadata = {
   icons: ["https://avatars.githubusercontent.com/u/179229932"],
 };
 
-// 3. Create a AppKit instance
-const modal = createAppKit({
-  adapters: [new EthersAdapter()],
-  networks: [baseSepolia, optimismSepolia, sepolia],
-  metadata,
-  projectId,
-  features: {
-    connectMethodsOrder: ["wallet"],
-  },
-});
+// 3. AppKit modal will be created lazily by initAppKit() to avoid
+// background WalletConnect relay connections on page load (which can
+// fail on some networks / DNS setups). `modal` starts null and is only
+// constructed when we actually need it (e.g., user presses Connect).
+let modal = null;
 
 // Ensure initAppKit exists for legacy callers. The app previously
 // attempted to call `initAppKit()` on DOMContentLoaded but the
@@ -33,11 +28,20 @@ const modal = createAppKit({
 // if AppKit `modal` is already created above.
 export function initAppKit() {
   try {
-    // modal is already created synchronously above; ensure it's usable
-    if (modal && typeof modal.open === 'function') {
-      // No heavy work here. Consumers can call modal.open() later.
-      return modal;
-    }
+    // Lazily create the modal only once. This prevents the AppKit
+    // internals from starting background websocket connections on page
+    // load (which can cause DNS errors on some networks).
+    if (modal && typeof modal.open === 'function') return modal;
+    modal = createAppKit({
+      adapters: [new EthersAdapter()],
+      networks: [baseSepolia, optimismSepolia, sepolia],
+      metadata,
+      projectId,
+      features: {
+        connectMethodsOrder: ["wallet"],
+      },
+    });
+    return modal;
   } catch (e) {
     console.error('initAppKit internal error', e);
   }
@@ -174,6 +178,8 @@ export function init() {
     // Try to use AppKit modal provider first
     try {
       let providerCandidate = null;
+      // Ensure modal is created lazily here. Don't init until we're
+      // ready to attempt connecting (and after relay reachability check).
       try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
       if (!providerCandidate) {
         // Before opening the modal, do a quick reachability check for the
@@ -193,7 +199,11 @@ export function init() {
           // Friendly message for end-user; keep the app usable with injected wallets
           alert('Nie można połączyć się z serwerem WalletConnect (relay). Sprawdź połączenie sieciowe lub spróbuj innej sieci.');
         } else {
-          try { modal.open(); } catch(e){}
+          // Create the AppKit modal lazily and open it.
+          try {
+            initAppKit();
+            if (modal && typeof modal.open === 'function') modal.open();
+          } catch(e){}
         }
         for (let i = 0; i < 20; i++) {
           try { providerCandidate = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null; } catch(e){}
