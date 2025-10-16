@@ -8,7 +8,11 @@
     "build:watch": "esbuild gm_test2.js --bundle --sourcemap --outfile=dist/gm_test2.bundle.js --watch"
   },
   "dependencies": {
-    "ethers": "^6.11.1"
+    "@reown/appkit": "^1.8.10",
+    "@reown/appkit-adapter-ethers": "^1.8.10",
+    "ethers": "^6.15.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "esbuild": "^0.19.0"

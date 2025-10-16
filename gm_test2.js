@@ -1,4 +1,30 @@
 import { ethers } from 'ethers';
+import { createAppKit } from "@reown/appkit";
+import { EthersAdapter } from "@reown/appkit-adapter-ethers";
+import { mainnet, arbitrum } from "@reown/appkit/networks";
+
+// 1. Get projectId from https://dashboard.reown.com
+const projectId = "b56e18d47c72ab683b10814fe9495694";
+
+// 2. Create your application's metadata object
+const metadata = {
+  name: "AppKit",
+  description: "AppKit Example",
+  url: "https://reown.com/appkit", // origin must match your domain & subdomain
+  icons: ["https://avatars.githubusercontent.com/u/179229932"],
+};
+
+// 3. Create a AppKit instance
+const modal = createAppKit({
+  adapters: [new EthersAdapter()],
+  networks: [mainnet, arbitrum],
+  metadata,
+  projectId,
+  features: {
+    analytics: true, // Optional - defaults to your Cloud configuration
+  },
+});
+
 
 export function init() {
   const NETWORKS = [
@@ -254,6 +280,12 @@ export function init() {
 if (typeof window !== 'undefined') {
   window.addEventListener('DOMContentLoaded', () => {
     // wait a tick so HTML elements are present
+    try {
+      // initialize AppKit after DOM is ready
+      initAppKit();
+    } catch (e) {
+      console.error('initAppKit error', e);
+    }
     try { init(); } catch (e) { console.error('Init error', e); }
   });
 }
