@@ -583,11 +583,16 @@ function startAutoProviderMonitor() {
       }
       
       if (modalConnected && !activeEip1193Provider) {
-        console.log('[auto-monitor] Modal shows connected but no active provider - auto-refreshing...');
-        const success = await forceRefreshProvider().catch(() => false);
-        if (success) {
-          console.log('[auto-monitor] Auto-refresh succeeded!');
-        }
+        console.log('[auto-monitor] Modal shows connected but no active provider - waiting before auto-refresh...');
+        // Add delay for mobile provider initialization
+        setTimeout(async () => {
+          if (!activeEip1193Provider) { // Check again after delay
+            const success = await forceRefreshProvider().catch(() => false);
+            if (success) {
+              console.log('[auto-monitor] Auto-refresh succeeded!');
+            }
+          }
+        }, 2000);
       }
     } catch (e) {
       console.debug('auto-monitor error', e);
@@ -613,8 +618,13 @@ function setupVisibilityChangeDetection() {
         try {
           const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
           if (modalConnected && !activeEip1193Provider) {
-            console.log('[visibility] Modal connected but no provider - auto-refreshing...');
-            await forceRefreshProvider().catch(e => console.debug('visibility refresh failed', e));
+            console.log('[visibility] Modal connected but no provider - waiting before auto-refresh...');
+            // Add extra delay for mobile wallet initialization
+            setTimeout(async () => {
+              if (!activeEip1193Provider) {
+                await forceRefreshProvider().catch(e => console.debug('visibility refresh failed', e));
+              }
+            }, 1500);
           }
         } catch (e) {
           console.debug('visibility check error', e);
@@ -630,8 +640,12 @@ function setupVisibilityChangeDetection() {
         try {
           const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
           if (modalConnected && !activeEip1193Provider) {
-            console.log('[focus] Modal connected but no provider - auto-refreshing...');
-            await forceRefreshProvider().catch(e => console.debug('focus refresh failed', e));
+            console.log('[focus] Modal connected but no provider - waiting before auto-refresh...');
+            setTimeout(async () => {
+              if (!activeEip1193Provider) {
+                await forceRefreshProvider().catch(e => console.debug('focus refresh failed', e));
+              }
+            }, 1500);
           }
         } catch (e) {
           console.debug('focus check error', e);
@@ -707,19 +721,51 @@ async function forceRefreshProvider() {
     
     console.log('[forceRefresh] final extracted provider:', provider);
     if (provider && typeof provider.request === 'function') {
-      // test the provider first
-      try {
-        const accounts = await provider.request({ method: 'eth_accounts' });
-        console.log('[forceRefresh] provider test - accounts:', accounts);
-        if (!accounts || !accounts.length) {
-          console.warn('[forceRefresh] provider has no accounts');
-          showBanner('Found provider but no accounts - wallet may not be connected', 'warning');
+      // test the provider with retry logic for mobile connections
+      let accounts = null;
+      let testError = null;
+      
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[forceRefresh] provider test attempt ${attempt}/3...`);
+          accounts = await provider.request({ method: 'eth_accounts' });
+          console.log('[forceRefresh] provider test - accounts:', accounts);
+          testError = null;
+          break; // success
+        } catch (e) {
+          testError = e;
+          const errorMsg = e?.message || String(e);
+          
+          // If it's a "Please call connect() before request()" error, wait and retry
+          if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
+            console.log(`[forceRefresh] provider not ready (attempt ${attempt}/3), waiting...`);
+            if (attempt < 3) {
+              await new Promise(resolve => setTimeout(resolve, 1500)); // Wait 1.5s between attempts
+              continue;
+            }
+          } else {
+            // Other errors - don't retry
+            console.warn(`[forceRefresh] provider test failed with non-connection error:`, e);
+            break;
+          }
+        }
+      }
+      
+      if (testError) {
+        const errorMsg = testError?.message || String(testError);
+        if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
+          console.warn('[forceRefresh] provider not ready after retries - accepting provider anyway for mobile flows');
+          // For mobile flows, sometimes the provider works even if eth_accounts fails initially
+          // We'll set it as active and let the connection process continue
+        } else {
+          console.warn('[forceRefresh] provider test failed with error:', testError);
+          showBanner('Found provider but it\'s not working - try reconnecting', 'warning');
           return false;
         }
-      } catch (e) {
-        console.warn('[forceRefresh] provider test failed:', e);
-        showBanner('Found provider but it\'s not working - try reconnecting', 'warning');
-        return false;
+      } else if (!accounts || !accounts.length) {
+        console.warn('[forceRefresh] provider has no accounts - might be disconnected');
+        // Don't fail here - could be a timing issue with mobile wallets
+        console.log('[forceRefresh] accepting provider anyway - accounts might appear after connection completes');
       }
       
       activeEip1193Provider = provider;
