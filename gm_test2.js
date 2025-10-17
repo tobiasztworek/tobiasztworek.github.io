@@ -8,7 +8,7 @@ const projectId = '3a5538ce9969461166625db3fdcbef8c';
 const metadata = {
   name: 'dApp GM',
   description: 'dApp to say GM on multiple chains',
-  url: 'http://tobiasztworek.github.io/',
+  url: 'https://tobiasztworek.github.io',
   icons: ['https://avatars.githubusercontent.com/u/179229932'],
 };
 
@@ -56,7 +56,7 @@ const NETWORKS = [
 const GM_ABI = [
   'function sayGM() external payable',
   'function getGmFeeInEth() view returns (uint256)',
-  'function getUserSafe(address) view returns (uint256,uint256,bool)',
+  // ...existing code...
 ];
 
 // ----- AppKit lazy init -----
@@ -129,9 +129,16 @@ export function initAppKit() {
                 lastSuccessfulConnection = Date.now();
               }
             } else if (!modalConnected && activeEip1193Provider) {
-              // Modal shows disconnected but we still have provider - disconnect
-              console.log('[modal-state] Modal disconnected but still have active provider - disconnecting...');
-              handleModalDisconnection();
+              // Check if the active provider is injected (not from modal)
+              const isInjected = activeEip1193Provider === window.ethereum;
+              if (isInjected) {
+                // Injected provider doesn't need modal to be connected - skip
+                console.log('[modal-state] Using injected provider - modal state irrelevant');
+              } else {
+                // Modal shows disconnected but we still have provider - disconnect
+                console.log('[modal-state] Modal disconnected but still have active provider - disconnecting...');
+                handleModalDisconnection();
+              }
             }
           } catch (e) {
             console.debug('modal-state check failed', e);
@@ -298,8 +305,7 @@ function renderNetworkCard(net) {
     <div class="mb-3">
       <div><strong>Status:</strong> <span class="statusText">—</span></div>
       <div><strong>GM Fee:</strong> <span class="feeEth">—</span> ETH</div>
-      <div><strong>🔥 Streak:</strong> <span class="streak">—</span> dni</div>
-      <div><strong>💬 Total GM:</strong> <span class="totalGm">—</span></div>
+// ...existing code...
     </div>
     <div class="d-flex gap-2 mb-2">
       <button class="fetchFeeBtn btn btn-secondary flex-fill">Calculate fee</button>
@@ -312,8 +318,7 @@ function renderNetworkCard(net) {
   const sayGmBtn = container.querySelector('.sayGmBtn');
   const statusText = container.querySelector('.statusText');
   const feeEthText = container.querySelector('.feeEth');
-  const streakText = container.querySelector('.streak');
-  const totalGmText = container.querySelector('.totalGm');
+// ...existing code...
   const txStatus = container.querySelector('.txStatus');
   const addBtn = container.querySelector('.addBtn');
   fetchFeeBtn.style.backgroundColor = net.buttonColor; sayGmBtn.style.backgroundColor = net.buttonColor;
@@ -351,9 +356,7 @@ function renderNetworkCard(net) {
       await tx.wait();
       statusText.textContent = 'GM completed successfully ☀️';
       txStatus.textContent = 'Confirmed: ' + tx.hash;
-      const user = await contract.getUserSafe(await s.getAddress());
-      streakText.textContent = user[0];
-      totalGmText.textContent = user[1];
+// ...existing code...
     } catch (e) {
       console.error(e);
       statusText.textContent = 'Error in transaction';
@@ -385,6 +388,61 @@ async function connect() {
   console.log('🔵 [FUNCTION] connect() STARTED');
   userInitiatedConnection = true; // Mark this as user-initiated
   
+  // PRIORITY 1: Try injected provider first (MetaMask browser extension)
+  if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
+    console.log('[connect] Injected provider detected - using browser wallet');
+    try {
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      activeEip1193Provider = window.ethereum;
+      
+      // Attach event listeners to injected provider
+      try {
+        attachProviderEventListeners(window.ethereum);
+        console.log('[connect] Event listeners attached to injected provider');
+      } catch (e) {
+        console.warn('[connect] Failed to attach listeners:', e);
+      }
+      
+      const provider = getEthersProvider();
+      if (provider) {
+        signer = await provider.getSigner();
+        connectBtn.textContent = 'Disconnect';
+        clearBanner();
+        renderNetworkUIOnce();
+        
+        // Reset broken session counters on successful connection
+        if (brokenSessionCount > 0) {
+          console.log('[connect] Successful connection - resetting broken session counters');
+          brokenSessionCount = 0;
+          brokenSessionCooldownActive = false;
+        }
+        
+        console.log('🔵 [FUNCTION] connect() COMPLETED - INJECTED PROVIDER');
+        return;
+      }
+    } catch (injectedError) {
+      console.warn('[connect] Injected provider failed:', injectedError);
+      
+      // Check if user rejected the request
+      const isUserRejection = injectedError?.code === 4001 || 
+                              injectedError?.message?.includes('User rejected') ||
+                              injectedError?.message?.includes('User denied');
+      
+      if (isUserRejection) {
+        console.log('[connect] User rejected wallet connection');
+        showBanner('Connection cancelled by user', 'info');
+        console.log('🔵 [FUNCTION] connect() COMPLETED - USER REJECTED');
+        return; // ✅ EXIT - nie próbuj AppKit modal
+      }
+      
+      // Only continue to fallback if it's not a user rejection
+      console.log('[connect] Injected failed (not user rejection) - will try AppKit modal fallback');
+    }
+  }
+  
+  // PRIORITY 2: Fallback to WalletConnect/AppKit modal
+  console.log('[connect] No injected provider or injected failed - trying AppKit modal...');
+  
   const relayOk = await isRelayReachable().catch(() => false);
   if (!relayOk) {
     showBanner('WalletConnect relay unreachable — try connecting with an injected wallet or check your network.', 'warning', [ { label: 'Use injected', onClick: () => tryUseInjectedNow() }, { label: 'Retry', onClick: () => connect() } ]);
@@ -404,7 +462,7 @@ async function connect() {
     try {
       // Optimistically accept the modal provider so UI updates immediately.
       activeEip1193Provider = providerCandidate;
-      connectBtn.textContent = 'Connected';
+  connectBtn.textContent = 'Disconnect';
       clearBanner();
       renderNetworkUIOnce();
       // attach provider listeners right away if possible
@@ -419,7 +477,7 @@ async function connect() {
           activeEip1193Provider = null;
           connectBtn.textContent = 'Connect';
         } else {
-          try { signer = (await getEthersProvider())?.getSigner(); await updateCurrentNetworkStats(); } catch (e) { console.debug('post-finalize update failed', e); }
+          try { signer = (await getEthersProvider())?.getSigner(); } catch (e) { console.debug('post-finalize update failed', e); }
         }
       })();
     } catch (e) { console.warn('providerCandidate probe failed', e); }
@@ -465,7 +523,7 @@ async function connect() {
     try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { console.warn('eth_requestAccounts failed', e); }
   }
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
-  signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats();
+  signer = await provider.getSigner(); connectBtn.textContent = 'Disconnect'; clearBanner(); renderNetworkUIOnce();
   
   // Reset broken session counters on successful connection
   if (brokenSessionCount > 0) {
@@ -559,10 +617,10 @@ function setupResumeHandlers() {
           const provider = getEthersProvider();
           if (provider) {
             signer = await provider.getSigner();
-            connectBtn.textContent = 'Connected';
+            connectBtn.textContent = 'Disconnect';
             clearBanner();
             renderNetworkUIOnce();
-            await updateCurrentNetworkStats();
+            // await updateCurrentNetworkStats();
           }
         }
       }
@@ -578,7 +636,7 @@ try { setupResumeHandlers(); } catch (e) {}
 // Circuit breaker to prevent infinite loops in event handlers
 let chainChangedCount = 0;
 let lastChainChangeTime = 0;
-let isUpdatingStats = false; // prevent updateAllStats recursion
+// ...existing code...
 
 // Attach provider-level event listeners (disconnect, accountsChanged, chainChanged)
 function attachProviderEventListeners(p) {
@@ -597,14 +655,20 @@ function attachProviderEventListeners(p) {
     safeOn('accountsChanged', async (accounts) => {
       console.log('🔥 [EVENT] accountsChanged TRIGGERED with accounts:', accounts);
       try {
+        // Check if user has manually disconnected - respect their choice
+        const connectionStatus = localStorage.getItem('@appkit/connection_status');
+        if (connectionStatus === 'disconnected') {
+          console.log('[accountsChanged] User manually disconnected - ignoring event');
+          return;
+        }
+        
         if (!accounts || !accounts.length) {
           activeEip1193Provider = null;
           showBanner('Wallet accounts cleared. Reconnect?', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
           return;
         }
         // update signer and stats
-        signer = (await getEthersProvider())?.getSigner();
-        await updateCurrentNetworkStats();
+  signer = (await getEthersProvider())?.getSigner();
       } catch (e) { console.debug('accountsChanged handler failed', e); }
     });
     safeOn('chainChanged', async (chainId) => {
@@ -624,25 +688,55 @@ function attachProviderEventListeners(p) {
       
       console.debug('chainChanged to', chainId, 'count:', chainChangedCount);
       
-      // CRITICAL: Don't call updateAllStats if we're already updating stats
-      // This prevents the infinite loop: updateAllStats → switchNetwork → chainChanged → updateAllStats
-      if (isUpdatingStats) {
-        console.debug('chainChanged ignored - already updating stats');
-        return;
-      }
+      // ...existing code...
       
       try { 
         // Add delay to prevent rapid-fire events
         setTimeout(() => {
-          if (!isUpdatingStats) {
-            updateCurrentNetworkStats().catch(e => {});
-          }
+          // if (!isUpdatingStats) {
+          //   updateCurrentNetworkStats().catch(e => {});
+          // }
         }, 500);
       } catch (e) {}
     });
     // AppKit/EthersAdapter may emit session events — try to listen generically
     safeOn('session_update', (ev) => { console.debug('session_update', ev); });
   } catch (e) { console.debug('attachProviderEventListeners error', e); }
+}
+
+// User-initiated disconnect
+async function disconnect() {
+  console.log('❌ [FUNCTION] disconnect() CALLED');
+  
+  try {
+    // Check if using injected provider
+    const isInjected = activeEip1193Provider === window.ethereum;
+    
+    if (isInjected) {
+      console.log('[disconnect] Disconnecting injected provider (browser wallet)');
+      // For injected providers, we can't programmatically disconnect them
+      // We just clear our local state and set localStorage flag
+      localStorage.setItem('@appkit/connection_status', 'disconnected');
+    } else if (modal) {
+      // For modal/WalletConnect, properly disconnect through AppKit
+      console.log('[disconnect] Disconnecting modal/WalletConnect provider');
+      try {
+        if (typeof modal.disconnect === 'function') {
+          await modal.disconnect();
+          console.log('[disconnect] Modal disconnect succeeded');
+        }
+      } catch (e) {
+        console.warn('[disconnect] Modal disconnect failed:', e);
+      }
+    }
+    
+    // Clear local state regardless of provider type
+    handleModalDisconnection();
+    
+    console.log('❌ [FUNCTION] disconnect() COMPLETED');
+  } catch (error) {
+    console.error('[disconnect] Error during disconnect:', error);
+  }
 }
 
 // Handle disconnection detected from modal state
@@ -711,6 +805,13 @@ function startAutoProviderMonitor() {
           return;
         }
         
+        // Don't auto-refresh if in broken session cooldown
+        const timeSinceLastBrokenSession = now - lastBrokenSessionTime;
+        if (brokenSessionCooldownActive && timeSinceLastBrokenSession < BROKEN_SESSION_COOLDOWN_MS) {
+          console.log('[auto-monitor] Skipping auto-refresh due to recent broken session cooldown');
+          return;
+        }
+        
         console.log('[auto-monitor] Modal shows connected but no active provider - waiting before auto-refresh...');
         // Add delay for mobile provider initialization
         setTimeout(async () => {
@@ -723,8 +824,14 @@ function startAutoProviderMonitor() {
           }
         }, 3000); // Increased delay
       } else if (!modalConnected && activeEip1193Provider) {
-        console.log('[auto-monitor] Modal shows disconnected but we have active provider - disconnecting...');
-        handleModalDisconnection();
+        // Check if the active provider is injected (not from modal)
+        const isInjected = activeEip1193Provider === window.ethereum;
+        if (isInjected) {
+          console.log('[auto-monitor] Using injected provider - modal state irrelevant');
+        } else {
+          console.log('[auto-monitor] Modal shows disconnected but we have active provider - disconnecting...');
+          handleModalDisconnection();
+        }
       }
     } catch (e) {
       console.debug('auto-monitor error', e);
@@ -753,16 +860,28 @@ function startConnectionStateSynchronization() {
       if (modalConnected && !activeEip1193Provider) {
         // Modal connected but app disconnected - could be a missed connection event
         console.log('[sync] Detected missed connection - modal connected but app disconnected');
+        
+        // Don't auto-refresh if in cooldown or if this just happened
+        const timeSinceLastBrokenSession = Date.now() - lastBrokenSessionTime;
+        if (brokenSessionCooldownActive && timeSinceLastBrokenSession < BROKEN_SESSION_COOLDOWN_MS) {
+          console.log('[sync] Skipping auto-refresh due to recent broken session');
+        }
       } else if (!modalConnected && activeEip1193Provider) {
-        // Modal disconnected but app still connected - missed disconnection event
-        console.log('[sync] Detected missed disconnection - modal disconnected but app connected');
-        handleModalDisconnection();
+        // Check if the active provider is injected (not from modal)
+        const isInjected = activeEip1193Provider === window.ethereum;
+        if (isInjected) {
+          console.log('[sync] Using injected provider - modal state irrelevant');
+        } else {
+          // Modal disconnected but app still connected - missed disconnection event
+          console.log('[sync] Detected missed disconnection - modal disconnected but app connected');
+          handleModalDisconnection();
+        }
       }
       
       // Update button text to match reality
       if (connectBtn) {
         const currentText = connectBtn.textContent;
-        const expectedText = activeEip1193Provider ? 'Connected' : 'Connect Wallet';
+  const expectedText = activeEip1193Provider ? 'Disconnect' : 'Connect Wallet';
         if (currentText !== expectedText) {
           console.log('[sync] Correcting button text from', currentText, 'to', expectedText);
           connectBtn.textContent = expectedText;
@@ -819,6 +938,14 @@ function setupVisibilityChangeDetection() {
             return;
           }
           
+          // Don't auto-refresh if in broken session cooldown
+          const now = Date.now();
+          const timeSinceLastBrokenSession = now - lastBrokenSessionTime;
+          if (brokenSessionCooldownActive && timeSinceLastBrokenSession < BROKEN_SESSION_COOLDOWN_MS) {
+            console.log('[focus] Skipping auto-refresh due to recent broken session cooldown');
+            return;
+          }
+          
           const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
           if (modalConnected && !activeEip1193Provider) {
             console.log('[focus] Modal connected but no provider - waiting before auto-refresh...');
@@ -843,9 +970,9 @@ let forceRefreshInProgress = false;
 let lastBrokenSessionTime = 0;
 let brokenSessionCount = 0;
 let brokenSessionCooldownActive = false;
-const BROKEN_SESSION_COOLDOWN = 30000; // 30 seconds cooldown
+const BROKEN_SESSION_COOLDOWN_MS = 30000; // 30 seconds cooldown
 const MAX_BROKEN_SESSION_ATTEMPTS = 3; // Max broken sessions before extended cooldown
-const EXTENDED_COOLDOWN = 120000; // 2 minutes extended cooldown
+const EXTENDED_COOLDOWN_MS = 120000; // 2 minutes extended cooldown
 
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
 async function forceRefreshProvider(userInitiated = false) {
@@ -855,7 +982,7 @@ async function forceRefreshProvider(userInitiated = false) {
   if (brokenSessionCooldownActive && !userInitiated) {
     const now = Date.now();
     const timeSinceLastBroken = now - lastBrokenSessionTime;
-    const cooldownTime = brokenSessionCount >= MAX_BROKEN_SESSION_ATTEMPTS ? EXTENDED_COOLDOWN : BROKEN_SESSION_COOLDOWN;
+    const cooldownTime = brokenSessionCount >= MAX_BROKEN_SESSION_ATTEMPTS ? EXTENDED_COOLDOWN_MS : BROKEN_SESSION_COOLDOWN_MS;
     
     if (timeSinceLastBroken < cooldownTime) {
       console.warn('[forceRefresh] In broken session cooldown period - skipping automatic refresh');
@@ -1254,7 +1381,25 @@ async function forceRefreshProvider(userInitiated = false) {
               localStorage.setItem('@appkit/connection_status', 'disconnected');
               
               console.log('[forceRefresh] Cleared broken WalletConnect state - user will need to reconnect properly');
-              showBanner('WalletConnect session reset - please reconnect your wallet', 'info');
+              
+              // Show helpful banner with retry button
+              showBanner(
+                'WalletConnect session expired. Please reconnect your wallet.',
+                'warning',
+                [{
+                  label: 'Reconnect',
+                  onClick: () => {
+                    clearBanner();
+                    // Reset cooldown for user-initiated action
+                    brokenSessionCooldownActive = false;
+                    brokenSessionCount = 0;
+                    // Open modal for reconnection
+                    if (modal && typeof modal.open === 'function') {
+                      modal.open();
+                    }
+                  }
+                }]
+              );
             } catch (clearError) {
               console.warn('[forceRefresh] Error clearing broken state:', clearError);
               
@@ -1308,7 +1453,7 @@ async function forceRefreshProvider(userInitiated = false) {
       
       // update UI safely
       try {
-        connectBtn.textContent = 'Connected';
+        connectBtn.textContent = 'Disconnect';
         clearBanner();
         renderNetworkUIOnce();
         
@@ -1332,7 +1477,7 @@ async function forceRefreshProvider(userInitiated = false) {
               }
               
               signer = await (getEthersProvider())?.getSigner();
-              updateCurrentNetworkStats().catch(e => console.debug('updateCurrentNetworkStats failed', e));
+              // updateCurrentNetworkStats().catch(e => console.debug('updateCurrentNetworkStats failed', e));
             }
           } catch (e) { console.debug('delayed operations failed', e); }
         }, 1000);
@@ -1404,7 +1549,7 @@ try {
   }
 } catch (e) {}
 
-async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
+async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Disconnect'; clearBanner(); renderNetworkUIOnce(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
   console.log('🔄 [FUNCTION] tryRestoreConnection() STARTED');
@@ -1433,9 +1578,9 @@ async function tryRestoreConnection() {
               console.log('[tryRestoreConnection] Standard provider restore successful');
               activeEip1193Provider = p; 
               signer = (await getEthersProvider())?.getSigner(); 
-              connectBtn.textContent = 'Connected'; 
+              connectBtn.textContent = 'Disconnect'; 
               renderNetworkUIOnce(); 
-              await updateCurrentNetworkStats(); 
+              // await updateCurrentNetworkStats(); 
               return true; 
             } 
           } 
@@ -1489,9 +1634,9 @@ async function tryRestoreConnection() {
           console.log('[tryRestoreConnection] Injected provider restore successful');
           activeEip1193Provider = window.ethereum; 
           signer = (await getEthersProvider())?.getSigner(); 
-          connectBtn.textContent = 'Connected'; 
+          connectBtn.textContent = 'Disconnect'; 
           renderNetworkUIOnce(); 
-          await updateCurrentNetworkStats();
+          // await updateCurrentNetworkStats();
           console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - SUCCESS'); 
           return true; 
         } 
@@ -1512,118 +1657,9 @@ async function tryRestoreConnection() {
 function waitForInjectedProvider(timeout = 3000, interval = 200) { return new Promise(resolve => { if (typeof window !== 'undefined' && window.ethereum) return resolve(true); const start = Date.now(); const id = setInterval(() => { if (typeof window !== 'undefined' && window.ethereum) { clearInterval(id); return resolve(true); } if (Date.now() - start > timeout) { clearInterval(id); return resolve(false); } }, interval); }); }
 
 // ----- update UI / stats -----
-async function updateAllStats() {
-  console.log('🟣 [FUNCTION] updateAllStats() STARTED');
-  // Prevent recursive calls that cause infinite loops
-  if (isUpdatingStats) {
-    console.debug('updateAllStats already in progress - skipping');
-    return;
-  }
-  
-  isUpdatingStats = true;
-  try {
-    const p = getEthersProvider(); 
-    if (!p || !signer) {
-      console.debug('updateAllStats: no provider or signer');
-      return;
-    }
-    
-    // Get current network only once to avoid multiple network switches
-    let currentChainId;
-    try {
-      const network = await p.getNetwork();
-      currentChainId = Number(network.chainId);
-      console.log('[updateAllStats] current network:', currentChainId);
-    } catch (e) {
-      console.warn('[updateAllStats] failed to get current network:', e);
-      return;
-    }
-    
-    // Update stats only for the current network to avoid triggering chainChanged events
-    const currentNetwork = NETWORKS.find(n => parseInt(n.chainId, 16) === currentChainId);
-    
-    for (const net of NETWORKS) {
-      const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
-      if (!container) continue;
-      const statusText = container.querySelector('.statusText');
-      const streakText = container.querySelector('.streak');
-      const totalGmText = container.querySelector('.totalGm');
-      
-      if (net === currentNetwork) {
-        // Update stats for current network
-        try { 
-          statusText.textContent = 'Gathering stats...'; 
-          
-          const s = await p.getSigner(); 
-          const contract = new ethers.Contract(net.contractAddress, GM_ABI, s); 
-          const user = await contract.getUserSafe(await s.getAddress()); 
-          streakText.textContent = user[0]; 
-          totalGmText.textContent = user[1]; 
-          statusText.textContent = 'Stats gathered ✅'; 
-        } catch (e) { 
-          console.error(`Error gathering stats for ${net.name}:`, e); 
-          streakText.textContent = '—'; 
-          totalGmText.textContent = '—'; 
-          statusText.textContent = 'Error gathering stats'; 
-        }
-      } else {
-        // For other networks, just show that they're not current
-        statusText.textContent = 'Switch network to view stats';
-        streakText.textContent = '—';
-        totalGmText.textContent = '—';
-      }
-    }
-  } finally {
-    isUpdatingStats = false;
-    console.log('🟣 [FUNCTION] updateAllStats() COMPLETED');
-  }
-}
 
 // Update stats only for current network - called after network switches
-async function updateCurrentNetworkStats() {
-  console.log('🟡 [FUNCTION] updateCurrentNetworkStats() STARTED');
-  if (isUpdatingStats) return;
-  
-  try {
-    const p = getEthersProvider(); 
-    if (!p || !signer) return;
-    
-    const network = await p.getNetwork();
-    const currentChainId = Number(network.chainId);
-    const currentNetwork = NETWORKS.find(n => parseInt(n.chainId, 16) === currentChainId);
-    
-    if (!currentNetwork) {
-      console.debug('[updateCurrentNetworkStats] current network not in NETWORKS list');
-      return;
-    }
-    
-    const container = document.querySelector(`.status-card[data-chain="${currentNetwork.chainId}"]`);
-    if (!container) return;
-    
-    const statusText = container.querySelector('.statusText');
-    const streakText = container.querySelector('.streak');
-    const totalGmText = container.querySelector('.totalGm');
-    
-    try { 
-      statusText.textContent = 'Gathering stats...'; 
-      
-      const s = await p.getSigner(); 
-      const contract = new ethers.Contract(currentNetwork.contractAddress, GM_ABI, s); 
-      const user = await contract.getUserSafe(await s.getAddress()); 
-      streakText.textContent = user[0]; 
-      totalGmText.textContent = user[1]; 
-      statusText.textContent = 'Stats gathered ✅'; 
-    } catch (e) { 
-      console.error(`Error gathering stats for ${currentNetwork.name}:`, e); 
-      streakText.textContent = '—'; 
-      totalGmText.textContent = '—'; 
-      statusText.textContent = 'Error gathering stats'; 
-    }
-  } catch (e) {
-    console.debug('[updateCurrentNetworkStats] failed:', e);
-  }
-  console.log('🟡 [FUNCTION] updateCurrentNetworkStats() COMPLETED');
-}
+// ...existing code...
 
 // ----- global error suppression for noisy WC internals -----
 if (typeof window !== 'undefined') {
@@ -1721,7 +1757,16 @@ if (typeof window !== 'undefined') {
 }
 
 // ----- initialization -----
+let initCalled = false;
+
 export function init() {
+  // Prevent multiple initialization
+  if (initCalled) {
+    console.warn('init() already called - skipping duplicate initialization');
+    return;
+  }
+  initCalled = true;
+  
   connectBtn = document.getElementById('connectBtn'); networksRow = document.getElementById('networksRow'); bannerContainer = document.createElement('div'); bannerContainer.style.margin = '12px 0'; const header = document.querySelector('header');
   if (header) {
     header.appendChild(bannerContainer);
@@ -1769,9 +1814,38 @@ export function init() {
       header.appendChild(emergencyBtn);
     } catch (e) { console.debug('failed to add dev buttons', e); }
   }
-  connectBtn.addEventListener('click', () => { 
-    console.log('🔘 [CLICK] Connect button clicked - calling connect()'); 
-    connect(); 
+  
+  let isConnectingOrDisconnecting = false;
+  
+  connectBtn.addEventListener('click', async () => {
+    // Prevent double-clicks and rapid toggling
+    if (isConnectingOrDisconnecting) {
+      console.log('🔘 [CLICK] Already processing connection/disconnection - ignoring');
+      return;
+    }
+    
+    // Capture the current state BEFORE setting the flag
+    const shouldDisconnect = !!activeEip1193Provider;
+    
+    isConnectingOrDisconnecting = true;
+    connectBtn.disabled = true;
+    
+    try {
+      // Use the captured state to decide action
+      if (shouldDisconnect) {
+        console.log('🔘 [CLICK] Disconnect button clicked - calling disconnect()');
+        await disconnect();
+      } else {
+        console.log('🔘 [CLICK] Connect button clicked - calling connect()');
+        await connect();
+      }
+    } finally {
+      // Re-enable button after a short delay
+      setTimeout(() => {
+        isConnectingOrDisconnecting = false;
+        connectBtn.disabled = false;
+      }, 500);
+    }
   }); 
   renderNetworkUIOnce(); 
   tryRestoreConnection().catch(e => console.error('restore failed', e));
