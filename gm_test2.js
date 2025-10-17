@@ -107,6 +107,13 @@ export function initAppKit() {
             console.log('[modal-state] Connection check - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider);
             
             if (modalConnected && !activeEip1193Provider && !forceRefreshInProgress) {
+              // Check if user has manually disconnected - respect their choice
+              const connectionStatus = localStorage.getItem('@appkit/connection_status');
+              if (connectionStatus === 'disconnected') {
+                console.log('[modal-state] User manually disconnected - skipping auto-refresh');
+                return;
+              }
+              
               // Check cooldown to prevent spam
               const now = Date.now();
               if (now - lastSuccessfulConnection < 10000) {
@@ -762,6 +769,13 @@ function setupVisibilityChangeDetection() {
       console.log('[visibility] Page became visible - checking for provider...');
       setTimeout(async () => {
         try {
+          // Check if user has manually disconnected - respect their choice
+          const connectionStatus = localStorage.getItem('@appkit/connection_status');
+          if (connectionStatus === 'disconnected') {
+            console.log('[visibility] User manually disconnected - skipping auto-refresh');
+            return;
+          }
+          
           const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
           if (modalConnected && !activeEip1193Provider) {
             console.log('[visibility] Modal connected but no provider - waiting before auto-refresh...');
@@ -784,6 +798,13 @@ function setupVisibilityChangeDetection() {
       console.log('[focus] Window gained focus - checking for provider...');
       setTimeout(async () => {
         try {
+          // Check if user has manually disconnected - respect their choice
+          const connectionStatus = localStorage.getItem('@appkit/connection_status');
+          if (connectionStatus === 'disconnected') {
+            console.log('[focus] User manually disconnected - skipping auto-refresh');
+            return;
+          }
+          
           const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
           if (modalConnected && !activeEip1193Provider) {
             console.log('[focus] Modal connected but no provider - waiting before auto-refresh...');
