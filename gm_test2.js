@@ -913,6 +913,17 @@ async function forceRefreshProvider() {
                          provider.client || 
                          JSON.stringify(provider).includes('walletconnect');
         console.log('[forceRefresh] isWalletConnect detection:', isWalletConnect);
+        
+        // Detailed session diagnostics
+        console.log('[forceRefresh] provider session state:', {
+          hasSession: !!provider.session,
+          sessionValue: provider.session,
+          hasClient: !!provider.client,
+          hasNamespaces: provider.session?.namespaces,
+          accounts: provider.session?.namespaces?.eip155?.accounts,
+          connected: provider.connected,
+          chainId: provider.chainId
+        });
       } catch (e) { 
         console.debug('[forceRefresh] WalletConnect detection failed', e); 
       }
@@ -922,18 +933,30 @@ async function forceRefreshProvider() {
         try {
           console.log('[forceRefresh] attempting to enable WalletConnect provider...');
           
-          // Wait for session to be available if it exists
-          if (provider.session === undefined && provider.client) {
+          // Try to activate WalletConnect session through different methods
+          console.log('[forceRefresh] attempting to activate WalletConnect session...');
+          
+          // Method 1: Check if provider has session but is not connected
+          if (provider.session && !provider.connected) {
+            console.log('[forceRefresh] found session but provider not connected, trying to reconnect...');
+            try {
+              if (typeof provider.connect === 'function') {
+                await provider.connect();
+                console.log('[forceRefresh] provider.connect() succeeded');
+              }
+            } catch (e) {
+              console.warn('[forceRefresh] provider.connect() failed:', e);
+            }
+          }
+          
+          // Method 2: If no session, wait a bit for it to initialize
+          if (!provider.session && provider.client) {
             console.log('[forceRefresh] waiting for WalletConnect session initialization...');
             let waitAttempts = 0;
-            while (provider.session === undefined && waitAttempts < 10) {
-              await new Promise(resolve => setTimeout(resolve, 500));
+            while (!provider.session && waitAttempts < 5) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
               waitAttempts++;
-            }
-            if (provider.session) {
-              console.log('[forceRefresh] WalletConnect session now available');
-            } else {
-              console.warn('[forceRefresh] WalletConnect session still not available after waiting');
+              console.log(`[forceRefresh] session wait attempt ${waitAttempts}/5, session:`, !!provider.session);
             }
           }
           
@@ -963,6 +986,23 @@ async function forceRefreshProvider() {
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           console.log(`[forceRefresh] provider test attempt ${attempt}/3...`);
+          
+          // For WalletConnect, try different methods to check readiness
+          if (isWalletConnect) {
+            console.log(`[forceRefresh] WC provider state check - connected:${provider.connected}, session:${!!provider.session}, accounts:${provider.session?.namespaces?.eip155?.accounts}`);
+            
+            // If we have session but not connected, try to reconnect
+            if (provider.session && !provider.connected) {
+              console.log(`[forceRefresh] attempting to reconnect WC provider...`);
+              try {
+                await provider.connect();
+                await new Promise(resolve => setTimeout(resolve, 500)); // Give it time
+              } catch (reconnectError) {
+                console.warn('[forceRefresh] reconnect failed:', reconnectError);
+              }
+            }
+          }
+          
           accounts = await provider.request({ method: 'eth_accounts' });
           console.log('[forceRefresh] provider test - accounts:', accounts);
           testError = null;
@@ -970,12 +1010,13 @@ async function forceRefreshProvider() {
         } catch (e) {
           testError = e;
           const errorMsg = e?.message || String(e);
+          console.log(`[forceRefresh] test attempt ${attempt} failed:`, errorMsg);
           
           // If it's a "Please call connect() before request()" error, wait and retry
           if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
             console.log(`[forceRefresh] provider not ready (attempt ${attempt}/3), waiting...`);
             if (attempt < 3) {
-              await new Promise(resolve => setTimeout(resolve, 1500)); // Wait 1.5s between attempts
+              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s between attempts
               continue;
             }
           } else {
