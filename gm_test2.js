@@ -208,7 +208,29 @@ function getActiveProvider() {
 function getEthersProvider() {
   const p = getActiveProvider();
   if (!p) return null;
-  try { return new ethers.BrowserProvider(p); } catch (e) { console.error('Invalid EIP-1193 provider', e); return null; }
+  try { 
+    // Create BrowserProvider with custom options to be more tolerant of network detection issues
+    const browserProvider = new ethers.BrowserProvider(p, "any");
+    
+    // Override the network detection to be less aggressive for WalletConnect providers
+    const originalDetectNetwork = browserProvider._detectNetwork;
+    if (originalDetectNetwork) {
+      browserProvider._detectNetwork = async function() {
+        try {
+          return await originalDetectNetwork.call(this);
+        } catch (e) {
+          // If network detection fails, return a generic network to prevent startup issues
+          console.debug('[ethers] network detection failed, using fallback:', e.message);
+          return { chainId: 1, name: 'unknown' }; // fallback network
+        }
+      };
+    }
+    
+    return browserProvider; 
+  } catch (e) { 
+    console.error('Invalid EIP-1193 provider', e); 
+    return null; 
+  }
 }
 
 // Small helper to ask the user's wallet to add a chain (used by the "Add Chain" button)
@@ -368,7 +390,7 @@ async function connect() {
           activeEip1193Provider = null;
           connectBtn.textContent = 'Connect';
         } else {
-          try { signer = (await getEthersProvider())?.getSigner(); await updateAllStats(); } catch (e) { console.debug('post-finalize update failed', e); }
+          try { signer = (await getEthersProvider())?.getSigner(); await updateCurrentNetworkStats(); } catch (e) { console.debug('post-finalize update failed', e); }
         }
       })();
     } catch (e) { console.warn('providerCandidate probe failed', e); }
@@ -414,7 +436,7 @@ async function connect() {
     try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { console.warn('eth_requestAccounts failed', e); }
   }
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
-  signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats();
+  signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats();
 }
 
 // Attempt to finalize a modal-provided provider: check eth_accounts, wait for readiness,
@@ -499,7 +521,7 @@ function setupResumeHandlers() {
             connectBtn.textContent = 'Connected';
             clearBanner();
             renderNetworkUIOnce();
-            await updateAllStats();
+            await updateCurrentNetworkStats();
           }
         }
       }
@@ -541,7 +563,7 @@ function attachProviderEventListeners(p) {
         }
         // update signer and stats
         signer = (await getEthersProvider())?.getSigner();
-        await updateAllStats();
+        await updateCurrentNetworkStats();
       } catch (e) { console.debug('accountsChanged handler failed', e); }
     });
     safeOn('chainChanged', async (chainId) => {
@@ -571,7 +593,7 @@ function attachProviderEventListeners(p) {
         // Add delay to prevent rapid-fire events
         setTimeout(() => {
           if (!isUpdatingStats) {
-            updateAllStats().catch(e => {});
+            updateCurrentNetworkStats().catch(e => {});
           }
         }, 500);
       } catch (e) {}
@@ -859,6 +881,39 @@ async function forceRefreshProvider() {
     
     console.log('[forceRefresh] final extracted provider:', provider);
     if (provider && typeof provider.request === 'function') {
+      // For WalletConnect providers, try to enable/connect them first
+      let isWalletConnect = false;
+      try {
+        isWalletConnect = provider.constructor?.name?.includes('Universal') || 
+                         provider.session || 
+                         provider.client || 
+                         JSON.stringify(provider).includes('walletconnect');
+        console.log('[forceRefresh] isWalletConnect detection:', isWalletConnect);
+      } catch (e) { 
+        console.debug('[forceRefresh] WalletConnect detection failed', e); 
+      }
+      
+      // If this is a WalletConnect provider that needs enabling
+      if (isWalletConnect) {
+        try {
+          console.log('[forceRefresh] attempting to enable WalletConnect provider...');
+          
+          // Try different methods to enable the provider
+          if (typeof provider.enable === 'function') {
+            await provider.enable();
+            console.log('[forceRefresh] provider.enable() succeeded');
+          } else if (typeof provider.connect === 'function') {
+            await provider.connect();
+            console.log('[forceRefresh] provider.connect() succeeded');
+          } else {
+            console.log('[forceRefresh] no enable/connect method found, trying request directly');
+          }
+        } catch (e) {
+          console.warn('[forceRefresh] provider enable/connect failed:', e);
+          // Continue anyway - sometimes it still works
+        }
+      }
+      
       // test the provider with retry logic for mobile connections
       let accounts = null;
       let testError = null;
@@ -892,9 +947,9 @@ async function forceRefreshProvider() {
       if (testError) {
         const errorMsg = testError?.message || String(testError);
         if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
-          console.warn('[forceRefresh] provider not ready after retries - accepting provider anyway for mobile flows');
-          // For mobile flows, sometimes the provider works even if eth_accounts fails initially
-          // We'll set it as active and let the connection process continue
+          console.warn('[forceRefresh] provider not ready after retries - will set as active but may need connection finalization');
+          // For WalletConnect flows, the provider often becomes ready after being set as active
+          // The connection will be finalized by other mechanisms
         } else {
           console.warn('[forceRefresh] provider test failed with error:', testError);
           showBanner('Found provider but it\'s not working - try reconnecting', 'warning');
@@ -920,10 +975,24 @@ async function forceRefreshProvider() {
         // Delay these operations to prevent triggering the infinite loop
         setTimeout(async () => {
           try {
-            signer = await (getEthersProvider())?.getSigner();
-            // Only update stats if we still have the same provider
+            // Additional validation for WalletConnect providers that might need time to initialize
             if (activeEip1193Provider === provider) {
-              updateAllStats().catch(e => console.debug('updateAllStats failed', e));
+              try {
+                console.log('[forceRefresh] delayed validation - testing provider readiness...');
+                const testAccounts = await provider.request({ method: 'eth_accounts' });
+                console.log('[forceRefresh] delayed validation - accounts:', testAccounts);
+                
+                if (testAccounts && testAccounts.length > 0) {
+                  console.log('[forceRefresh] provider is now ready with accounts');
+                } else {
+                  console.log('[forceRefresh] provider ready but no accounts yet');
+                }
+              } catch (validationError) {
+                console.warn('[forceRefresh] delayed validation failed, provider may still need more time:', validationError);
+              }
+              
+              signer = await (getEthersProvider())?.getSigner();
+              updateCurrentNetworkStats().catch(e => console.debug('updateCurrentNetworkStats failed', e));
             }
           } catch (e) { console.debug('delayed operations failed', e); }
         }, 1000);
@@ -986,7 +1055,7 @@ try {
   }
 } catch (e) {}
 
-async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
+async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
   console.log('[tryRestoreConnection] Starting connection restore process...');
@@ -1007,7 +1076,7 @@ async function tryRestoreConnection() {
               signer = (await getEthersProvider())?.getSigner(); 
               connectBtn.textContent = 'Connected'; 
               renderNetworkUIOnce(); 
-              await updateAllStats(); 
+              await updateCurrentNetworkStats(); 
               return true; 
             } 
           } 
@@ -1063,7 +1132,7 @@ async function tryRestoreConnection() {
           signer = (await getEthersProvider())?.getSigner(); 
           connectBtn.textContent = 'Connected'; 
           renderNetworkUIOnce(); 
-          await updateAllStats(); 
+          await updateCurrentNetworkStats(); 
           return true; 
         } 
       } catch (e) { 
@@ -1097,6 +1166,20 @@ async function updateAllStats() {
       return;
     }
     
+    // Get current network only once to avoid multiple network switches
+    let currentChainId;
+    try {
+      const network = await p.getNetwork();
+      currentChainId = Number(network.chainId);
+      console.log('[updateAllStats] current network:', currentChainId);
+    } catch (e) {
+      console.warn('[updateAllStats] failed to get current network:', e);
+      return;
+    }
+    
+    // Update stats only for the current network to avoid triggering chainChanged events
+    const currentNetwork = NETWORKS.find(n => parseInt(n.chainId, 16) === currentChainId);
+    
     for (const net of NETWORKS) {
       const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
       if (!container) continue;
@@ -1104,33 +1187,76 @@ async function updateAllStats() {
       const streakText = container.querySelector('.streak');
       const totalGmText = container.querySelector('.totalGm');
       
-      try { 
-        statusText.textContent = 'Gathering stats...'; 
-        
-        // This is the problematic call - switchToNetwork triggers chainChanged events
-        await switchToNetwork(net); 
-        
-        const prov = getEthersProvider(); 
-        if (!prov) { 
-          statusText.textContent = 'No provider'; 
-          continue; 
-        } 
-        
-        const s = await prov.getSigner(); 
-        const contract = new ethers.Contract(net.contractAddress, GM_ABI, s); 
-        const user = await contract.getUserSafe(await s.getAddress()); 
-        streakText.textContent = user[0]; 
-        totalGmText.textContent = user[1]; 
-        statusText.textContent = 'Stats gathered ✅'; 
-      } catch (e) { 
-        console.error(`Error gathering stats for ${net.name}:`, e); 
-        streakText.textContent = '—'; 
-        totalGmText.textContent = '—'; 
-        statusText.textContent = 'Error gathering stats'; 
+      if (net === currentNetwork) {
+        // Update stats for current network
+        try { 
+          statusText.textContent = 'Gathering stats...'; 
+          
+          const s = await p.getSigner(); 
+          const contract = new ethers.Contract(net.contractAddress, GM_ABI, s); 
+          const user = await contract.getUserSafe(await s.getAddress()); 
+          streakText.textContent = user[0]; 
+          totalGmText.textContent = user[1]; 
+          statusText.textContent = 'Stats gathered ✅'; 
+        } catch (e) { 
+          console.error(`Error gathering stats for ${net.name}:`, e); 
+          streakText.textContent = '—'; 
+          totalGmText.textContent = '—'; 
+          statusText.textContent = 'Error gathering stats'; 
+        }
+      } else {
+        // For other networks, just show that they're not current
+        statusText.textContent = 'Switch network to view stats';
+        streakText.textContent = '—';
+        totalGmText.textContent = '—';
       }
     }
   } finally {
     isUpdatingStats = false;
+  }
+}
+
+// Update stats only for current network - called after network switches
+async function updateCurrentNetworkStats() {
+  if (isUpdatingStats) return;
+  
+  try {
+    const p = getEthersProvider(); 
+    if (!p || !signer) return;
+    
+    const network = await p.getNetwork();
+    const currentChainId = Number(network.chainId);
+    const currentNetwork = NETWORKS.find(n => parseInt(n.chainId, 16) === currentChainId);
+    
+    if (!currentNetwork) {
+      console.debug('[updateCurrentNetworkStats] current network not in NETWORKS list');
+      return;
+    }
+    
+    const container = document.querySelector(`.status-card[data-chain="${currentNetwork.chainId}"]`);
+    if (!container) return;
+    
+    const statusText = container.querySelector('.statusText');
+    const streakText = container.querySelector('.streak');
+    const totalGmText = container.querySelector('.totalGm');
+    
+    try { 
+      statusText.textContent = 'Gathering stats...'; 
+      
+      const s = await p.getSigner(); 
+      const contract = new ethers.Contract(currentNetwork.contractAddress, GM_ABI, s); 
+      const user = await contract.getUserSafe(await s.getAddress()); 
+      streakText.textContent = user[0]; 
+      totalGmText.textContent = user[1]; 
+      statusText.textContent = 'Stats gathered ✅'; 
+    } catch (e) { 
+      console.error(`Error gathering stats for ${currentNetwork.name}:`, e); 
+      streakText.textContent = '—'; 
+      totalGmText.textContent = '—'; 
+      statusText.textContent = 'Error gathering stats'; 
+    }
+  } catch (e) {
+    console.debug('[updateCurrentNetworkStats] failed:', e);
   }
 }
 
