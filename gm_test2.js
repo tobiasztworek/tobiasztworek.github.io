@@ -82,11 +82,28 @@ export function initAppKit() {
             // attach provider listeners if missing
             try { attachProviderEventListeners(p); } catch (e) {}
             clearInterval(pid);
+          } else if (probeCount === 10 && modal && !activeEip1193Provider) {
+            // After 3 seconds (10 * 300ms), try forceRefreshProvider if no standard provider
+            console.log('[appkit probe] No standard provider after 3s, trying forceRefreshProvider...');
+            forceRefreshProvider().catch(e => console.debug('appkit probe refresh failed', e));
           }
         } catch (e) { /* ignore */ }
         if (probeCount > 100) clearInterval(pid);
       }, 300);
     } catch (e) {}
+    
+    // Subscribe to modal state changes for automatic provider refresh
+    try {
+      modal.subscribeState?.((state) => {
+        console.log('[modal-state] State change:', state);
+        if (state?.selectedNetworkId && !activeEip1193Provider) {
+          console.log('[modal-state] Network selected but no provider - refreshing...');
+          setTimeout(() => forceRefreshProvider().catch(e => {}), 1000);
+        }
+      });
+    } catch (e) {
+      console.debug('subscribeState failed', e);
+    }
     return modal;
   } catch (e) {
     console.error('initAppKit error', e);
@@ -540,6 +557,7 @@ let isAutoMonitoring = false;
 function startAutoProviderMonitor() {
   if (isAutoMonitoring) return;
   isAutoMonitoring = true;
+  console.log('[auto-monitor] Starting auto provider monitoring...');
   
   const checkInterval = setInterval(async () => {
     try {
@@ -548,12 +566,21 @@ function startAutoProviderMonitor() {
       
       // Check if modal shows connected state
       let modalConnected = false;
+      let connectionInfo = {};
       try {
         // Various ways to check if modal thinks it's connected
-        modalConnected = modal.getIsConnectedState?.() || 
-                        modal.connectionControllerClient?.state?.isConnected ||
-                        (modal.getCaipAddress?.() && modal.getCaipAddress() !== undefined);
-      } catch (e) {}
+        connectionInfo.isConnectedState = modal.getIsConnectedState?.();
+        connectionInfo.caipAddress = modal.getCaipAddress?.();
+        connectionInfo.connectionState = modal.connectionControllerClient?.state?.isConnected;
+        
+        modalConnected = connectionInfo.isConnectedState || 
+                        connectionInfo.connectionState ||
+                        (connectionInfo.caipAddress && connectionInfo.caipAddress !== undefined);
+        
+        console.log('[auto-monitor] Check - modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider, 'info:', connectionInfo);
+      } catch (e) {
+        console.debug('[auto-monitor] connection check error:', e);
+      }
       
       if (modalConnected && !activeEip1193Provider) {
         console.log('[auto-monitor] Modal shows connected but no active provider - auto-refreshing...');
@@ -565,13 +592,53 @@ function startAutoProviderMonitor() {
     } catch (e) {
       console.debug('auto-monitor error', e);
     }
-  }, 2000); // Check every 2 seconds
+  }, 1000); // Check every 1 second (more frequent)
   
-  // Stop monitoring after 30 seconds to avoid infinite monitoring
+  // Stop monitoring after 60 seconds
   setTimeout(() => {
+    console.log('[auto-monitor] Stopping auto provider monitoring');
     clearInterval(checkInterval);
     isAutoMonitoring = false;
-  }, 30000);
+  }, 60000);
+}
+
+// Detect when user returns from external wallet (mobile deep-link flows)
+function setupVisibilityChangeDetection() {
+  if (typeof document === 'undefined') return;
+  
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden && modal && !activeEip1193Provider) {
+      console.log('[visibility] Page became visible - checking for provider...');
+      setTimeout(async () => {
+        try {
+          const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
+          if (modalConnected && !activeEip1193Provider) {
+            console.log('[visibility] Modal connected but no provider - auto-refreshing...');
+            await forceRefreshProvider().catch(e => console.debug('visibility refresh failed', e));
+          }
+        } catch (e) {
+          console.debug('visibility check error', e);
+        }
+      }, 500);
+    }
+  });
+  
+  window.addEventListener('focus', async () => {
+    if (modal && !activeEip1193Provider) {
+      console.log('[focus] Window gained focus - checking for provider...');
+      setTimeout(async () => {
+        try {
+          const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
+          if (modalConnected && !activeEip1193Provider) {
+            console.log('[focus] Modal connected but no provider - auto-refreshing...');
+            await forceRefreshProvider().catch(e => console.debug('focus refresh failed', e));
+          }
+        } catch (e) {
+          console.debug('focus check error', e);
+        }
+      }, 500);
+    }
+  });
 }
 
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
@@ -736,22 +803,77 @@ try {
 async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
+  console.log('[tryRestoreConnection] Starting connection restore process...');
   try {
+    // First try standard AppKit provider restoration
     if (modal && typeof modal.getProvider === 'function') {
       const p = modal.getProvider();
+      console.log('[tryRestoreConnection] modal.getProvider() result:', p);
+      
       if (p && typeof p.request === 'function') {
-        try { const ready = await waitForProviderReady(p, 2000); if (ready) { const accounts = await p.request({ method: 'eth_accounts' }).catch(() => []); if (accounts && accounts.length) { activeEip1193Provider = p; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; renderNetworkUIOnce(); await updateAllStats(); return true; } } } catch (e) { console.debug('modal restore failed', e); }
-      } else {
-        // If modal.getProvider() returns null but modal exists, try forceRefreshProvider
-        console.log('[tryRestoreConnection] modal.getProvider() returned null, trying forceRefreshProvider...');
-        const refreshSuccess = await forceRefreshProvider().catch(() => false);
-        if (refreshSuccess) {
-          return true; // forceRefreshProvider handles everything
+        try { 
+          const ready = await waitForProviderReady(p, 2000); 
+          if (ready) { 
+            const accounts = await p.request({ method: 'eth_accounts' }).catch(() => []); 
+            if (accounts && accounts.length) { 
+              console.log('[tryRestoreConnection] Standard provider restore successful');
+              activeEip1193Provider = p; 
+              signer = (await getEthersProvider())?.getSigner(); 
+              connectBtn.textContent = 'Connected'; 
+              renderNetworkUIOnce(); 
+              await updateAllStats(); 
+              return true; 
+            } 
+          } 
+        } catch (e) { 
+          console.debug('modal restore failed', e); 
         }
       }
+      
+      // If modal exists but getProvider() returns null or failed, try forceRefreshProvider
+      // This is especially important on page refresh when modal has a saved session
+      if (modal) {
+        console.log('[tryRestoreConnection] Attempting forceRefreshProvider for page refresh...');
+        const refreshSuccess = await forceRefreshProvider().catch((e) => {
+          console.debug('forceRefreshProvider failed in tryRestoreConnection', e);
+          return false;
+        });
+        if (refreshSuccess) {
+          console.log('[tryRestoreConnection] forceRefreshProvider succeeded on page refresh!');
+          return true;
+        }
+      }
+    } else if (modal) {
+      // If modal exists but getProvider is not a function, still try forceRefreshProvider
+      console.log('[tryRestoreConnection] Modal exists but getProvider not available, trying forceRefreshProvider...');
+      const refreshSuccess = await forceRefreshProvider().catch(() => false);
+      if (refreshSuccess) {
+        return true;
+      }
     }
-    if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') { try { const accounts = await window.ethereum.request({ method: 'eth_accounts' }); if (accounts && accounts.length) { activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; renderNetworkUIOnce(); await updateAllStats(); return true; } } catch (e) { console.debug('injected restore failed', e); } }
-  } catch (e) { console.error('restore connection error', e); }
+    
+    // Fallback to injected provider (MetaMask extension)
+    if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') { 
+      try { 
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' }); 
+        if (accounts && accounts.length) { 
+          console.log('[tryRestoreConnection] Injected provider restore successful');
+          activeEip1193Provider = window.ethereum; 
+          signer = (await getEthersProvider())?.getSigner(); 
+          connectBtn.textContent = 'Connected'; 
+          renderNetworkUIOnce(); 
+          await updateAllStats(); 
+          return true; 
+        } 
+      } catch (e) { 
+        console.debug('injected restore failed', e); 
+      } 
+    }
+  } catch (e) { 
+    console.error('restore connection error', e); 
+  }
+  
+  console.log('[tryRestoreConnection] No connection restored');
   return false;
 }
 
@@ -960,6 +1082,26 @@ export function init() {
   
   // Start auto-monitoring for modal/provider mismatches
   setTimeout(() => startAutoProviderMonitor(), 3000);
+  
+  // Setup detection for return from external wallet
+  setupVisibilityChangeDetection();
+  
+  // Additional delayed check for page refresh scenarios
+  // Sometimes the modal needs extra time to initialize its session state
+  setTimeout(async () => {
+    if (!activeEip1193Provider && modal) {
+      console.log('[delayed-check] No active provider after 5s, checking modal state...');
+      try {
+        const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
+        if (modalConnected) {
+          console.log('[delayed-check] Modal appears connected, trying forceRefreshProvider...');
+          await forceRefreshProvider().catch(e => console.debug('delayed refresh failed', e));
+        }
+      } catch (e) {
+        console.debug('delayed check error', e);
+      }
+    }
+  }, 5000);
 }
 
 if (typeof window !== 'undefined') { window.addEventListener('DOMContentLoaded', () => { try { init(); } catch (e) { console.error('init error', e); } }); }
