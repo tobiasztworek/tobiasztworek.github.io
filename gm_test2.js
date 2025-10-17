@@ -448,6 +448,11 @@ function setupResumeHandlers() {
 // ensure resume handlers are installed once
 try { setupResumeHandlers(); } catch (e) {}
 
+// Circuit breaker to prevent infinite loops in event handlers
+let chainChangedCount = 0;
+let lastChainChangeTime = 0;
+let isUpdatingStats = false; // prevent updateAllStats recursion
+
 // Attach provider-level event listeners (disconnect, accountsChanged, chainChanged)
 function attachProviderEventListeners(p) {
   if (!p) return;
@@ -477,8 +482,36 @@ function attachProviderEventListeners(p) {
       } catch (e) { console.debug('accountsChanged handler failed', e); }
     });
     safeOn('chainChanged', async (chainId) => {
-      console.debug('chainChanged to', chainId);
-      try { await updateAllStats(); } catch (e) {}
+      // Circuit breaker: prevent infinite loops
+      const now = Date.now();
+      if (now - lastChainChangeTime < 1000) {
+        chainChangedCount++;
+        if (chainChangedCount > 10) {
+          console.warn('chainChanged circuit breaker triggered - too many events in short time');
+          return;
+        }
+      } else {
+        chainChangedCount = 0;
+      }
+      lastChainChangeTime = now;
+      
+      console.debug('chainChanged to', chainId, 'count:', chainChangedCount);
+      
+      // CRITICAL: Don't call updateAllStats if we're already updating stats
+      // This prevents the infinite loop: updateAllStats → switchNetwork → chainChanged → updateAllStats
+      if (isUpdatingStats) {
+        console.debug('chainChanged ignored - already updating stats');
+        return;
+      }
+      
+      try { 
+        // Add delay to prevent rapid-fire events
+        setTimeout(() => {
+          if (!isUpdatingStats) {
+            updateAllStats().catch(e => {});
+          }
+        }, 500);
+      } catch (e) {}
     });
     // AppKit/EthersAdapter may emit session events — try to listen generically
     safeOn('session_update', (ev) => { console.debug('session_update', ev); });
@@ -567,17 +600,28 @@ async function forceRefreshProvider() {
       }
       
       activeEip1193Provider = provider;
-      try { attachProviderEventListeners(provider); } catch (e) {}
+      // DON'T attach event listeners immediately after force refresh
+      // to prevent infinite loops - they'll be attached during normal connect flow
       console.log('[forceRefresh] SUCCESS - provider set as active');
       
-      // update UI
+      // update UI safely
       try {
         connectBtn.textContent = 'Connected';
         clearBanner();
         renderNetworkUIOnce();
-        signer = await (getEthersProvider())?.getSigner();
-        updateAllStats().catch(e => console.debug('updateAllStats failed', e));
-        showBanner('Provider refreshed successfully!', 'success');
+        
+        // Delay these operations to prevent triggering the infinite loop
+        setTimeout(async () => {
+          try {
+            signer = await (getEthersProvider())?.getSigner();
+            // Only update stats if we still have the same provider
+            if (activeEip1193Provider === provider) {
+              updateAllStats().catch(e => console.debug('updateAllStats failed', e));
+            }
+          } catch (e) { console.debug('delayed operations failed', e); }
+        }, 1000);
+        
+        showBanner('Provider refreshed successfully! Connecting...', 'success');
       } catch (e) { console.debug('UI update failed', e); }
       return true;
     } else {
@@ -653,14 +697,54 @@ function waitForInjectedProvider(timeout = 3000, interval = 200) { return new Pr
 
 // ----- update UI / stats -----
 async function updateAllStats() {
-  const p = getEthersProvider(); if (!p || !signer) return;
-  for (const net of NETWORKS) {
-    const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
-    if (!container) continue;
-    const statusText = container.querySelector('.statusText');
-    const streakText = container.querySelector('.streak');
-    const totalGmText = container.querySelector('.totalGm');
-    try { statusText.textContent = 'Gathering stats...'; await switchToNetwork(net); const prov = getEthersProvider(); if (!prov) { statusText.textContent = 'No provider'; continue; } const s = await prov.getSigner(); const contract = new ethers.Contract(net.contractAddress, GM_ABI, s); const user = await contract.getUserSafe(await s.getAddress()); streakText.textContent = user[0]; totalGmText.textContent = user[1]; statusText.textContent = 'Stats gathered ✅'; } catch (e) { console.error(`Error gathering stats for ${net.name}:`, e); streakText.textContent = '—'; totalGmText.textContent = '—'; statusText.textContent = 'Error gathering stats'; }
+  // Prevent recursive calls that cause infinite loops
+  if (isUpdatingStats) {
+    console.debug('updateAllStats already in progress - skipping');
+    return;
+  }
+  
+  isUpdatingStats = true;
+  try {
+    const p = getEthersProvider(); 
+    if (!p || !signer) {
+      console.debug('updateAllStats: no provider or signer');
+      return;
+    }
+    
+    for (const net of NETWORKS) {
+      const container = document.querySelector(`.status-card[data-chain="${net.chainId}"]`);
+      if (!container) continue;
+      const statusText = container.querySelector('.statusText');
+      const streakText = container.querySelector('.streak');
+      const totalGmText = container.querySelector('.totalGm');
+      
+      try { 
+        statusText.textContent = 'Gathering stats...'; 
+        
+        // This is the problematic call - switchToNetwork triggers chainChanged events
+        await switchToNetwork(net); 
+        
+        const prov = getEthersProvider(); 
+        if (!prov) { 
+          statusText.textContent = 'No provider'; 
+          continue; 
+        } 
+        
+        const s = await prov.getSigner(); 
+        const contract = new ethers.Contract(net.contractAddress, GM_ABI, s); 
+        const user = await contract.getUserSafe(await s.getAddress()); 
+        streakText.textContent = user[0]; 
+        totalGmText.textContent = user[1]; 
+        statusText.textContent = 'Stats gathered ✅'; 
+      } catch (e) { 
+        console.error(`Error gathering stats for ${net.name}:`, e); 
+        streakText.textContent = '—'; 
+        totalGmText.textContent = '—'; 
+        statusText.textContent = 'Error gathering stats'; 
+      }
+    }
+  } finally {
+    isUpdatingStats = false;
   }
 }
 
@@ -785,8 +869,27 @@ export function init() {
           if (window.forceRefreshProvider) await window.forceRefreshProvider();
         } catch (e) { console.warn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
       });
+      
+      // Emergency disconnect button
+      const emergencyBtn = document.createElement('button');
+      emergencyBtn.className = 'btn btn-sm btn-danger ms-2';
+      emergencyBtn.textContent = 'Emergency Reset';
+      emergencyBtn.addEventListener('click', () => {
+        try {
+          console.warn('EMERGENCY RESET triggered by user');
+          activeEip1193Provider = null;
+          signer = null;
+          if (modal) {
+            try { modal.disconnect?.(); } catch (e) {}
+          }
+          connectBtn.textContent = 'Connect Wallet';
+          showBanner('Emergency reset completed - try connecting again', 'warning');
+        } catch (e) { console.error('Emergency reset failed', e); }
+      });
+      
       header.appendChild(devBtn);
       header.appendChild(refreshBtn);
+      header.appendChild(emergencyBtn);
     } catch (e) { console.debug('failed to add dev buttons', e); }
   }
   connectBtn.addEventListener('click', () => connect()); renderNetworkUIOnce(); tryRestoreConnection().catch(e => console.error('restore failed', e));
@@ -798,10 +901,39 @@ if (typeof window !== 'undefined') {
   // Global diagnostics: surface unhandled rejections and errors so we can
   // provide clearer messages for WalletConnect relay failures observed on
   // some mobile browsers/networks.
+  // Circuit breaker for infinite loop detection
+  let stackOverflowCount = 0;
+  let lastStackOverflowTime = 0;
+  
   window.addEventListener('unhandledrejection', (ev) => {
     try {
       console.error('Unhandled promise rejection:', ev.reason);
       const reasonStr = (ev.reason && (ev.reason.stack || ev.reason.message || String(ev.reason))) || '';
+      
+      // Detect stack overflow / infinite recursion
+      if (reasonStr.includes('Maximum call stack size exceeded') || reasonStr.includes('RangeError')) {
+        const now = Date.now();
+        if (now - lastStackOverflowTime < 5000) {
+          stackOverflowCount++;
+          if (stackOverflowCount > 5) {
+            try { ev.preventDefault(); } catch (e) {}
+            console.error('CIRCUIT BREAKER: Too many stack overflows detected - reloading page in 3 seconds to recover');
+            showBanner('Critical error detected - reloading page automatically to recover...', 'danger');
+            setTimeout(() => { 
+              try { window.location.reload(); } catch (e) {}
+            }, 3000);
+            return;
+          }
+        } else {
+          stackOverflowCount = 0;
+        }
+        lastStackOverflowTime = now;
+        
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Stack overflow suppressed (count: ' + stackOverflowCount + ')');
+        return;
+      }
+      
       // Recognize the WalletConnect/browser-ponyfill 'setDefaultChain' crash
       // (it happens when an internal object is not yet initialized). Treat
       // it as handled to avoid noisy console traces and show a friendly hint.
