@@ -480,6 +480,13 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// Expose devDump to the global window so it can be invoked from console
+try {
+  if (typeof window !== 'undefined') {
+    window.devDump = devDump;
+  }
+} catch (e) {}
+
 async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
