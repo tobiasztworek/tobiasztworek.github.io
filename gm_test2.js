@@ -825,6 +825,10 @@ function setupVisibilityChangeDetection() {
 // Global lock to prevent multiple concurrent forceRefreshProvider calls
 let forceRefreshInProgress = false;
 
+// Broken session tracking to prevent infinite retry loops
+let lastBrokenSessionTime = 0;
+const BROKEN_SESSION_COOLDOWN = 30000; // 30 seconds cooldown
+
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
 async function forceRefreshProvider() {
   console.log('🟠 [FUNCTION] forceRefreshProvider() STARTED');
@@ -1171,23 +1175,49 @@ async function forceRefreshProvider() {
           if (isWalletConnect) {
             console.warn('[forceRefresh] WalletConnect provider has broken session - rejecting and clearing modal state');
             
+            // Check if we're in cooldown period to prevent infinite retries
+            const now = Date.now();
+            if (now - lastBrokenSessionTime < BROKEN_SESSION_COOLDOWN) {
+              console.warn('[forceRefresh] In broken session cooldown period - not clearing state again');
+              showBanner('WalletConnect session expired - please wait before reconnecting', 'info');
+              return false;
+            }
+            lastBrokenSessionTime = now;
+            
             // Clear broken session state and force proper reconnection
             try {
-              // Clear the broken modal connection state
-              if (modal && typeof modal.resetAccount === 'function') {
-                modal.resetAccount();
-              }
+              console.log('[forceRefresh] Attempting to clear broken WalletConnect state...');
+              
+              // Method 1: Try resetWcConnection first (safer)
               if (modal && typeof modal.resetWcConnection === 'function') {
-                modal.resetWcConnection();
+                await modal.resetWcConnection();
+                console.log('[forceRefresh] resetWcConnection() succeeded');
               }
               
-              // Clear localStorage state that might be causing confusion
+              // Method 2: Try to disconnect more gently
+              if (modal && typeof modal.disconnect === 'function') {
+                await modal.disconnect();
+                console.log('[forceRefresh] modal.disconnect() succeeded');
+              }
+              
+              // Method 3: Clear localStorage state that might be causing confusion
               localStorage.removeItem('@appkit/connection_status');
               localStorage.removeItem('@appkit/connections');
+              localStorage.setItem('@appkit/connection_status', 'disconnected');
               
               console.log('[forceRefresh] Cleared broken WalletConnect state - user will need to reconnect properly');
             } catch (clearError) {
               console.warn('[forceRefresh] Error clearing broken state:', clearError);
+              
+              // Fallback: Just clear localStorage if modal methods fail
+              try {
+                localStorage.removeItem('@appkit/connection_status');
+                localStorage.removeItem('@appkit/connections');
+                localStorage.setItem('@appkit/connection_status', 'disconnected');
+                console.log('[forceRefresh] Fallback: cleared localStorage state');
+              } catch (storageError) {
+                console.warn('[forceRefresh] Even localStorage cleanup failed:', storageError);
+              }
             }
             
             showBanner('WalletConnect session expired - please reconnect your wallet', 'warning');
