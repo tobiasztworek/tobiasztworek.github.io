@@ -1167,9 +1167,34 @@ async function forceRefreshProvider() {
       if (testError) {
         const errorMsg = testError?.message || String(testError);
         if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
-          console.warn('[forceRefresh] provider not ready after retries - will set as active but may need connection finalization');
-          // For WalletConnect flows, the provider often becomes ready after being set as active
-          // The connection will be finalized by other mechanisms
+          // For WalletConnect providers with broken sessions, force proper reconnection
+          if (isWalletConnect) {
+            console.warn('[forceRefresh] WalletConnect provider has broken session - rejecting and clearing modal state');
+            
+            // Clear broken session state and force proper reconnection
+            try {
+              // Clear the broken modal connection state
+              if (modal && typeof modal.resetAccount === 'function') {
+                modal.resetAccount();
+              }
+              if (modal && typeof modal.resetWcConnection === 'function') {
+                modal.resetWcConnection();
+              }
+              
+              // Clear localStorage state that might be causing confusion
+              localStorage.removeItem('@appkit/connection_status');
+              localStorage.removeItem('@appkit/connections');
+              
+              console.log('[forceRefresh] Cleared broken WalletConnect state - user will need to reconnect properly');
+            } catch (clearError) {
+              console.warn('[forceRefresh] Error clearing broken state:', clearError);
+            }
+            
+            showBanner('WalletConnect session expired - please reconnect your wallet', 'warning');
+            return false;
+          } else {
+            console.warn('[forceRefresh] Non-WC provider not ready after retries - will set as active but may need connection finalization');
+          }
         } else {
           console.warn('[forceRefresh] provider test failed with error:', testError);
           showBanner('Found provider but it\'s not working - try reconnecting', 'warning');
