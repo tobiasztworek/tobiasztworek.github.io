@@ -96,9 +96,21 @@ export function initAppKit() {
     try {
       modal.subscribeState?.((state) => {
         console.log('[modal-state] State change:', state);
+        // Only trigger refresh if modal shows connected AND we don't have active provider
         if (state?.selectedNetworkId && !activeEip1193Provider) {
-          console.log('[modal-state] Network selected but no provider - refreshing...');
-          setTimeout(() => forceRefreshProvider().catch(e => {}), 1000);
+          // Additional check: verify modal actually shows connected state
+          setTimeout(async () => {
+            try {
+              const isConnected = modal.getIsConnectedState?.();
+              const caipAddress = modal.getCaipAddress?.();
+              if (isConnected && caipAddress && !activeEip1193Provider) {
+                console.log('[modal-state] Modal truly connected but no provider - refreshing...');
+                await forceRefreshProvider().catch(e => {});
+              }
+            } catch (e) {
+              console.debug('modal-state check failed', e);
+            }
+          }, 1000);
         }
       });
     } catch (e) {
@@ -573,9 +585,11 @@ function startAutoProviderMonitor() {
         connectionInfo.caipAddress = modal.getCaipAddress?.();
         connectionInfo.connectionState = modal.connectionControllerClient?.state?.isConnected;
         
-        modalConnected = connectionInfo.isConnectedState || 
-                        connectionInfo.connectionState ||
-                        (connectionInfo.caipAddress && connectionInfo.caipAddress !== undefined);
+        // Only consider connected if we have a real CAIP address AND connected state
+        modalConnected = connectionInfo.isConnectedState && 
+                        connectionInfo.caipAddress && 
+                        connectionInfo.caipAddress !== undefined &&
+                        !connectionInfo.caipAddress.includes('undefined');
         
         console.log('[auto-monitor] Check - modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider, 'info:', connectionInfo);
       } catch (e) {
@@ -660,6 +674,33 @@ async function forceRefreshProvider() {
   try {
     console.log('[forceRefresh] attempting to extract provider from connected modal...');
     if (!modal) { console.warn('no modal available'); return false; }
+    
+    // FIRST: Check if modal actually shows connected state
+    let isModalConnected = false;
+    let connectionDetails = {};
+    try {
+      connectionDetails.isConnectedState = modal.getIsConnectedState?.();
+      connectionDetails.caipAddress = modal.getCaipAddress?.();
+      connectionDetails.connectionState = modal.connectionControllerClient?.state?.isConnected;
+      
+      isModalConnected = connectionDetails.isConnectedState || 
+                        (connectionDetails.caipAddress && connectionDetails.caipAddress !== undefined);
+      
+      console.log('[forceRefresh] modal connection check:', {
+        isConnectedState: connectionDetails.isConnectedState,
+        caipAddress: connectionDetails.caipAddress,
+        connectionState: connectionDetails.connectionState,
+        modalConnected: isModalConnected
+      });
+    } catch (e) {
+      console.debug('[forceRefresh] connection state check failed', e);
+    }
+    
+    // If modal doesn't show connected state, don't try to extract provider
+    if (!isModalConnected) {
+      console.log('[forceRefresh] modal is not in connected state - skipping provider extraction');
+      return false;
+    }
     
     // try multiple ways to get the provider from @reown/appkit with EthersAdapter
     let provider = null;
@@ -879,14 +920,29 @@ async function tryRestoreConnection() {
       // If modal exists but getProvider() returns null or failed, try forceRefreshProvider
       // This is especially important on page refresh when modal has a saved session
       if (modal) {
-        console.log('[tryRestoreConnection] Attempting forceRefreshProvider for page refresh...');
-        const refreshSuccess = await forceRefreshProvider().catch((e) => {
-          console.debug('forceRefreshProvider failed in tryRestoreConnection', e);
-          return false;
-        });
-        if (refreshSuccess) {
-          console.log('[tryRestoreConnection] forceRefreshProvider succeeded on page refresh!');
-          return true;
+        // Check if modal actually thinks it's connected before trying to restore
+        let modalConnected = false;
+        try {
+          const isConnected = modal.getIsConnectedState?.();
+          const caipAddress = modal.getCaipAddress?.();
+          modalConnected = isConnected && caipAddress && caipAddress !== undefined;
+          console.log('[tryRestoreConnection] Modal connection state - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected);
+        } catch (e) {
+          console.debug('modal connection state check failed', e);
+        }
+        
+        if (modalConnected) {
+          console.log('[tryRestoreConnection] Modal shows connected state, attempting forceRefreshProvider...');
+          const refreshSuccess = await forceRefreshProvider().catch((e) => {
+            console.debug('forceRefreshProvider failed in tryRestoreConnection', e);
+            return false;
+          });
+          if (refreshSuccess) {
+            console.log('[tryRestoreConnection] forceRefreshProvider succeeded on page refresh!');
+            return true;
+          }
+        } else {
+          console.log('[tryRestoreConnection] Modal not in connected state, skipping forceRefreshProvider');
         }
       }
     } else if (modal) {
@@ -1138,10 +1194,17 @@ export function init() {
     if (!activeEip1193Provider && modal) {
       console.log('[delayed-check] No active provider after 5s, checking modal state...');
       try {
-        const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
+        const isConnected = modal.getIsConnectedState?.();
+        const caipAddress = modal.getCaipAddress?.();
+        const modalConnected = isConnected && caipAddress && caipAddress !== undefined;
+        
+        console.log('[delayed-check] Modal state - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected);
+        
         if (modalConnected) {
           console.log('[delayed-check] Modal appears connected, trying forceRefreshProvider...');
           await forceRefreshProvider().catch(e => console.debug('delayed refresh failed', e));
+        } else {
+          console.log('[delayed-check] Modal not connected, no action needed');
         }
       } catch (e) {
         console.debug('delayed check error', e);
