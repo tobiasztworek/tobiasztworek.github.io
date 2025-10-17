@@ -199,6 +199,7 @@ async function isRelayReachable(timeout = 3000) {
 }
 
 function getActiveProvider() {
+  console.log('🔧 [FUNCTION] getActiveProvider() CALLED');
   if (activeEip1193Provider) return activeEip1193Provider;
   try { if (modal && typeof modal.getProvider === 'function') { const p = modal.getProvider(); if (p) return p; } } catch (e) {}
   if (typeof window !== 'undefined' && window.ethereum) return window.ethereum;
@@ -206,6 +207,7 @@ function getActiveProvider() {
 }
 
 function getEthersProvider() {
+  console.log('🔧 [FUNCTION] getEthersProvider() CALLED');
   const p = getActiveProvider();
   if (!p) return null;
   try { 
@@ -222,6 +224,20 @@ function getEthersProvider() {
           // If network detection fails, return a generic network to prevent startup issues
           console.debug('[ethers] network detection failed, using fallback:', e.message);
           return { chainId: 1, name: 'unknown' }; // fallback network
+        }
+      };
+    }
+    
+    // Override _start method to be more tolerant of connection issues
+    const originalStart = browserProvider._start;
+    if (originalStart) {
+      browserProvider._start = async function() {
+        try {
+          return await originalStart.call(this);
+        } catch (e) {
+          console.debug('[ethers] provider start failed, continuing anyway:', e.message);
+          // Don't throw - allow the provider to be used even if network detection fails
+          this._ready = true;
         }
       };
     }
@@ -341,6 +357,7 @@ function renderNetworkCard(net) {
 
 // ----- network switching -----
 async function switchToNetwork(net) {
+  console.log('🔶 [FUNCTION] switchToNetwork() STARTED for', net.name);
   const p = getActiveProvider();
   const params = [{ chainId: net.chainId }];
   const addParams = [{ chainId: net.chainId, chainName: net.name, nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: [net.rpcUrl], blockExplorerUrls: [net.explorer] }];
@@ -351,11 +368,13 @@ async function switchToNetwork(net) {
     try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('window addChain failed', e); } } else { console.warn('window switch failed', err); } }
   }
   showBanner('No wallet provider available for network switch. Connect a wallet or switch the network manually in your wallet.', 'warning', [ { label: 'Connect', onClick: () => connect() } ]);
+  console.log('🔶 [FUNCTION] switchToNetwork() COMPLETED - FAILED');
   return false;
 }
 
 // ----- connect / restore -----
 async function connect() {
+  console.log('🔵 [FUNCTION] connect() STARTED');
   const relayOk = await isRelayReachable().catch(() => false);
   if (!relayOk) {
     showBanner('WalletConnect relay unreachable — try connecting with an injected wallet or check your network.', 'warning', [ { label: 'Use injected', onClick: () => tryUseInjectedNow() }, { label: 'Retry', onClick: () => connect() } ]);
@@ -437,6 +456,7 @@ async function connect() {
   }
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
   signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats();
+  console.log('🔵 [FUNCTION] connect() COMPLETED');
 }
 
 // Attempt to finalize a modal-provided provider: check eth_accounts, wait for readiness,
@@ -554,8 +574,8 @@ function attachProviderEventListeners(p) {
       handleModalDisconnection();
     });
     safeOn('accountsChanged', async (accounts) => {
+      console.log('🔥 [EVENT] accountsChanged TRIGGERED with accounts:', accounts);
       try {
-        console.debug('accountsChanged', accounts);
         if (!accounts || !accounts.length) {
           activeEip1193Provider = null;
           showBanner('Wallet accounts cleared. Reconnect?', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
@@ -567,6 +587,7 @@ function attachProviderEventListeners(p) {
       } catch (e) { console.debug('accountsChanged handler failed', e); }
     });
     safeOn('chainChanged', async (chainId) => {
+      console.log('🔥 [EVENT] chainChanged TRIGGERED with chainId:', chainId);
       // Circuit breaker: prevent infinite loops
       const now = Date.now();
       if (now - lastChainChangeTime < 1000) {
@@ -605,6 +626,7 @@ function attachProviderEventListeners(p) {
 
 // Handle disconnection detected from modal state
 function handleModalDisconnection() {
+  console.log('❌ [FUNCTION] handleModalDisconnection() CALLED');
   console.log('[disconnect] Handling modal disconnection...');
   
   // Clear active provider and signer
@@ -630,6 +652,7 @@ let isAutoMonitoring = false;
 let lastSuccessfulConnection = 0;
 
 function startAutoProviderMonitor() {
+  console.log('⏱️ [FUNCTION] startAutoProviderMonitor() CALLED');
   if (isAutoMonitoring) return;
   isAutoMonitoring = true;
   console.log('[auto-monitor] Starting auto provider monitoring...');
@@ -783,6 +806,7 @@ let forceRefreshInProgress = false;
 
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
 async function forceRefreshProvider() {
+  console.log('🟠 [FUNCTION] forceRefreshProvider() STARTED');
   // Prevent multiple concurrent calls
   if (forceRefreshInProgress) {
     console.log('[forceRefresh] already in progress - skipping duplicate call');
@@ -898,6 +922,21 @@ async function forceRefreshProvider() {
         try {
           console.log('[forceRefresh] attempting to enable WalletConnect provider...');
           
+          // Wait for session to be available if it exists
+          if (provider.session === undefined && provider.client) {
+            console.log('[forceRefresh] waiting for WalletConnect session initialization...');
+            let waitAttempts = 0;
+            while (provider.session === undefined && waitAttempts < 10) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              waitAttempts++;
+            }
+            if (provider.session) {
+              console.log('[forceRefresh] WalletConnect session now available');
+            } else {
+              console.warn('[forceRefresh] WalletConnect session still not available after waiting');
+            }
+          }
+          
           // Try different methods to enable the provider
           if (typeof provider.enable === 'function') {
             await provider.enable();
@@ -906,7 +945,10 @@ async function forceRefreshProvider() {
             await provider.connect();
             console.log('[forceRefresh] provider.connect() succeeded');
           } else {
-            console.log('[forceRefresh] no enable/connect method found, trying request directly');
+            console.log('[forceRefresh] no enable/connect method found, checking session state');
+            if (provider.session && provider.session.namespaces) {
+              console.log('[forceRefresh] provider has valid session, should be ready');
+            }
           }
         } catch (e) {
           console.warn('[forceRefresh] provider enable/connect failed:', e);
@@ -962,6 +1004,22 @@ async function forceRefreshProvider() {
       }
       
       activeEip1193Provider = provider;
+      
+      // For WalletConnect providers, try to "wake up" the connection
+      if (isWalletConnect && provider.session) {
+        try {
+          console.log('[forceRefresh] attempting to wake up WalletConnect connection...');
+          // Try a simple request to activate the connection
+          await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+          const accounts = await provider.request({ method: 'eth_accounts' }).catch(() => null);
+          if (accounts && accounts.length > 0) {
+            console.log('[forceRefresh] WalletConnect connection activated successfully');
+          }
+        } catch (e) {
+          console.debug('[forceRefresh] wake up attempt failed, provider may need more time:', e);
+        }
+      }
+      
       // DON'T attach event listeners immediately after force refresh
       // to prevent infinite loops - they'll be attached during normal connect flow
       console.log('[forceRefresh] SUCCESS - provider set as active');
@@ -1011,6 +1069,7 @@ async function forceRefreshProvider() {
     return false;
   } finally {
     forceRefreshInProgress = false;
+    console.log('🟠 [FUNCTION] forceRefreshProvider() COMPLETED');
   }
 }
 
@@ -1058,6 +1117,7 @@ try {
 async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
+  console.log('🔄 [FUNCTION] tryRestoreConnection() STARTED');
   console.log('[tryRestoreConnection] Starting connection restore process...');
   try {
     // First try standard AppKit provider restoration
@@ -1132,7 +1192,8 @@ async function tryRestoreConnection() {
           signer = (await getEthersProvider())?.getSigner(); 
           connectBtn.textContent = 'Connected'; 
           renderNetworkUIOnce(); 
-          await updateCurrentNetworkStats(); 
+          await updateCurrentNetworkStats();
+          console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - SUCCESS'); 
           return true; 
         } 
       } catch (e) { 
@@ -1144,6 +1205,7 @@ async function tryRestoreConnection() {
   }
   
   console.log('[tryRestoreConnection] No connection restored');
+  console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - NO RESTORE');
   return false;
 }
 
@@ -1152,6 +1214,7 @@ function waitForInjectedProvider(timeout = 3000, interval = 200) { return new Pr
 
 // ----- update UI / stats -----
 async function updateAllStats() {
+  console.log('🟣 [FUNCTION] updateAllStats() STARTED');
   // Prevent recursive calls that cause infinite loops
   if (isUpdatingStats) {
     console.debug('updateAllStats already in progress - skipping');
@@ -1213,11 +1276,13 @@ async function updateAllStats() {
     }
   } finally {
     isUpdatingStats = false;
+    console.log('🟣 [FUNCTION] updateAllStats() COMPLETED');
   }
 }
 
 // Update stats only for current network - called after network switches
 async function updateCurrentNetworkStats() {
+  console.log('🟡 [FUNCTION] updateCurrentNetworkStats() STARTED');
   if (isUpdatingStats) return;
   
   try {
@@ -1258,6 +1323,7 @@ async function updateCurrentNetworkStats() {
   } catch (e) {
     console.debug('[updateCurrentNetworkStats] failed:', e);
   }
+  console.log('🟡 [FUNCTION] updateCurrentNetworkStats() COMPLETED');
 }
 
 // ----- global error suppression for noisy WC internals -----
