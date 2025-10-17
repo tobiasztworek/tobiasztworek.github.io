@@ -106,10 +106,20 @@ export function initAppKit() {
             
             console.log('[modal-state] Connection check - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider);
             
-            if (modalConnected && !activeEip1193Provider) {
+            if (modalConnected && !activeEip1193Provider && !forceRefreshInProgress) {
+              // Check cooldown to prevent spam
+              const now = Date.now();
+              if (now - lastSuccessfulConnection < 10000) {
+                console.log('[modal-state] In cooldown period - skipping refresh');
+                return;
+              }
+              
               // Modal shows connected but we don't have provider - try to refresh
               console.log('[modal-state] Modal connected but no active provider - refreshing...');
-              await forceRefreshProvider().catch(e => {});
+              const success = await forceRefreshProvider().catch(e => false);
+              if (success) {
+                lastSuccessfulConnection = Date.now();
+              }
             } else if (!modalConnected && activeEip1193Provider) {
               // Modal shows disconnected but we still have provider - disconnect
               console.log('[modal-state] Modal disconnected but still have active provider - disconnecting...');
@@ -118,7 +128,7 @@ export function initAppKit() {
           } catch (e) {
             console.debug('modal-state check failed', e);
           }
-        }, 500);
+        }, 2000); // Increased delay to reduce conflicts
       });
     } catch (e) {
       console.debug('subscribeState failed', e);
@@ -365,10 +375,11 @@ async function connect() {
   } else {
     // If modal.getProvider() returns null but modal exists, try to force refresh provider
     console.log('[connect] modal.getProvider() returned null, attempting forceRefreshProvider...');
-    if (modal && typeof forceRefreshProvider === 'function') {
+    if (modal && typeof forceRefreshProvider === 'function' && !forceRefreshInProgress) {
       const refreshSuccess = await forceRefreshProvider().catch(() => false);
       if (refreshSuccess) {
         console.log('[connect] forceRefreshProvider succeeded - provider should be available now');
+        lastSuccessfulConnection = Date.now();
         return; // forceRefreshProvider handles UI updates
       }
     }
@@ -594,6 +605,8 @@ function handleModalDisconnection() {
 
 // Auto-monitor for modal connection state vs provider availability mismatch
 let isAutoMonitoring = false;
+let lastSuccessfulConnection = 0;
+
 function startAutoProviderMonitor() {
   if (isAutoMonitoring) return;
   isAutoMonitoring = true;
@@ -625,16 +638,24 @@ function startAutoProviderMonitor() {
       }
       
       if (modalConnected && !activeEip1193Provider) {
+        // Add cooldown to prevent too frequent attempts
+        const now = Date.now();
+        if (now - lastSuccessfulConnection < 10000) {
+          console.log('[auto-monitor] In cooldown period after recent connection - skipping');
+          return;
+        }
+        
         console.log('[auto-monitor] Modal shows connected but no active provider - waiting before auto-refresh...');
         // Add delay for mobile provider initialization
         setTimeout(async () => {
-          if (!activeEip1193Provider) { // Check again after delay
+          if (!activeEip1193Provider && !forceRefreshInProgress) { // Check again after delay
             const success = await forceRefreshProvider().catch(() => false);
             if (success) {
               console.log('[auto-monitor] Auto-refresh succeeded!');
+              lastSuccessfulConnection = Date.now();
             }
           }
-        }, 2000);
+        }, 3000); // Increased delay
       } else if (!modalConnected && activeEip1193Provider) {
         console.log('[auto-monitor] Modal shows disconnected but we have active provider - disconnecting...');
         handleModalDisconnection();
@@ -642,7 +663,7 @@ function startAutoProviderMonitor() {
     } catch (e) {
       console.debug('auto-monitor error', e);
     }
-  }, 1000); // Check every 1 second (more frequent)
+  }, 3000); // Check every 3 seconds (less frequent)
   
   // Stop monitoring after 60 seconds
   setTimeout(() => {
@@ -735,8 +756,18 @@ function setupVisibilityChangeDetection() {
   });
 }
 
+// Global lock to prevent multiple concurrent forceRefreshProvider calls
+let forceRefreshInProgress = false;
+
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
 async function forceRefreshProvider() {
+  // Prevent multiple concurrent calls
+  if (forceRefreshInProgress) {
+    console.log('[forceRefresh] already in progress - skipping duplicate call');
+    return false;
+  }
+  
+  forceRefreshInProgress = true;
   try {
     console.log('[forceRefresh] attempting to extract provider from connected modal...');
     if (!modal) { console.warn('no modal available'); return false; }
@@ -909,6 +940,8 @@ async function forceRefreshProvider() {
     console.error('forceRefreshProvider failed', e);
     showBanner('Provider refresh failed - see console', 'danger');
     return false;
+  } finally {
+    forceRefreshInProgress = false;
   }
 }
 
