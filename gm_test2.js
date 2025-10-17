@@ -334,8 +334,10 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
     });
     if (accounts && accounts.length) return true;
 
-    // wait for provider to become ready (adapter initialization)
-    const ready = await waitForProviderReady(p, Math.max(5000, opts.timeout));
+  // wait for provider to become ready (adapter initialization)
+  // default to 30s on mobile-ish flows
+  const timeout = Math.max(5000, opts.timeout || 30000);
+  const ready = await waitForProviderReady(p, timeout);
     if (ready) {
       const accounts2 = await p.request({ method: 'eth_accounts' }).catch((err) => {
         try {
@@ -351,6 +353,8 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
 
     // last resort: request accounts which may prompt the external wallet
     try {
+      // show an informative banner while we wait for the user to approve
+      try { showBanner('Waiting for wallet approval…', 'info', [ { label: 'Cancel', onClick: () => { try { clearBanner(); activeEip1193Provider = null; } catch (e) {} } } ]); } catch (e) {}
       await p.request({ method: 'eth_requestAccounts' });
       const accounts3 = await p.request({ method: 'eth_accounts' }).catch((err) => {
         try {
@@ -361,13 +365,14 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
         } catch (e) {}
         return null;
       });
-      if (accounts3 && accounts3.length) return true;
+      if (accounts3 && accounts3.length) { try { clearBanner(); } catch (e) {} return true; }
     } catch (e) {
       // user may need to confirm in external app — return false so we can retry later
       const msg = e && (e.message || String(e)) || '';
       if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
         showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (ee) { console.warn(ee); } } } ]);
       }
+      try { clearBanner(); } catch (ee) {}
       return false;
     }
   } catch (e) {
@@ -406,6 +411,75 @@ function setupResumeHandlers() {
 // ensure resume handlers are installed once
 try { setupResumeHandlers(); } catch (e) {}
 
+// Attach provider-level event listeners (disconnect, accountsChanged, chainChanged)
+function attachProviderEventListeners(p) {
+  if (!p) return;
+  try {
+    const safeOn = (evName, handler) => {
+      try {
+        if (typeof p.on === 'function') p.on(evName, handler);
+        if (typeof p.addEventListener === 'function') p.addEventListener(evName, handler);
+      } catch (e) { console.debug('attach event failed', evName, e); }
+    };
+    safeOn('disconnect', (info) => {
+      console.warn('Provider disconnect event', info);
+      activeEip1193Provider = null;
+      showBanner('Wallet disconnected. Reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+    });
+    safeOn('accountsChanged', async (accounts) => {
+      try {
+        console.debug('accountsChanged', accounts);
+        if (!accounts || !accounts.length) {
+          activeEip1193Provider = null;
+          showBanner('Wallet accounts cleared. Reconnect?', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          return;
+        }
+        // update signer and stats
+        signer = (await getEthersProvider())?.getSigner();
+        await updateAllStats();
+      } catch (e) { console.debug('accountsChanged handler failed', e); }
+    });
+    safeOn('chainChanged', async (chainId) => {
+      console.debug('chainChanged to', chainId);
+      try { await updateAllStats(); } catch (e) {}
+    });
+    // AppKit/EthersAdapter may emit session events — try to listen generically
+    safeOn('session_update', (ev) => { console.debug('session_update', ev); });
+  } catch (e) { console.debug('attachProviderEventListeners error', e); }
+}
+
+// Developer diagnostic dump (button + shortcut)
+function devDump() {
+  try {
+    console.group('DEV DIAGNOSTICS');
+    console.log('timestamp', Date.now());
+    console.log('navigator.userAgent', navigator.userAgent);
+    console.log('window.ethereum present?', !!(typeof window !== 'undefined' && window.ethereum));
+    try { console.log('window.ethereum', window.ethereum); } catch (e) {}
+    console.log('modal present?', !!modal);
+    try { console.log('modal.getProvider()', modal && modal.getProvider ? modal.getProvider() : null); } catch (e) {}
+    console.log('activeEip1193Provider', activeEip1193Provider);
+    try { console.log('active provider keys', activeEip1193Provider ? Object.keys(activeEip1193Provider) : null); } catch (e) {}
+    try { console.log('__lastWcErrorDetail', typeof __lastWcErrorDetail !== 'undefined' ? __lastWcErrorDetail : null); } catch (e) {}
+    // run a lightweight finalize probe (non-invasive)
+    try {
+      const p = modal && modal.getProvider ? modal.getProvider() : null;
+      if (p && typeof p.request === 'function') {
+        p.request({ method: 'eth_accounts' }).then(a => console.log('probe eth_accounts ->', a)).catch(e => console.log('probe eth_accounts failed', e));
+      }
+    } catch (e) {}
+    console.log('Tip: on mobile, open browser devtools (remote) or use Ctrl+Shift+D to dump last WC error; include __lastWcErrorDetail in bug reports.');
+    console.groupEnd();
+  } catch (e) { console.error('devDump failed', e); }
+}
+
+// Wire a keyboard shortcut and small dev button in header
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (ev) => {
+    if (ev.ctrlKey && ev.shiftKey && ev.key.toLowerCase() === 'd') { devDump(); }
+  });
+}
+
 async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateAllStats(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
@@ -439,11 +513,87 @@ async function updateAllStats() {
 
 // ----- global error suppression for noisy WC internals -----
 if (typeof window !== 'undefined') {
+  // track recent expirations to avoid reopening modal repeatedly
+  let __lastWcSessionExpiryMs = 0;
+  const __wcExpiryCooldownMs = 15_000;
+  // last captured detailed error for dev diagnostics
+  let __lastWcErrorDetail = null;
+
+  function _extractTopicFromString(s) {
+    try {
+      if (!s) return null;
+      // common patterns where a topic/id may appear
+      const m1 = s.match(/session\s*topic[^a-z0-9]*([A-Za-z0-9:\._\-]{8,})/i);
+      if (m1 && m1[1]) return m1[1];
+      const m2 = s.match(/topic[^a-z0-9]*([A-Za-z0-9:\._\-]{8,})/i);
+      if (m2 && m2[1]) return m2[1];
+      const m3 = s.match(/"([a-f0-9]{8,})"/i);
+      if (m3 && m3[1]) return m3[1];
+      return null;
+    } catch (e) { return null; }
+  }
+
+  function handleExpiredWalletConnectSession(reasonMsg, errObj) {
+    try {
+      const now = Date.now();
+      if (now - __lastWcSessionExpiryMs < __wcExpiryCooldownMs) return; // rate-limit
+      __lastWcSessionExpiryMs = now;
+
+      const reasonStr = String(reasonMsg || (errObj && (errObj.stack || errObj.message)) || '');
+      const extractedTopic = _extractTopicFromString(reasonStr) || _extractTopicFromString(errObj && (errObj.stack || errObj.message));
+      __lastWcErrorDetail = {
+        timestamp: now,
+        reason: reasonStr,
+        stack: (errObj && (errObj.stack || errObj.message)) || null,
+        topic: extractedTopic,
+      };
+
+      console.warn('Detected expired WalletConnect session/topic:', __lastWcErrorDetail);
+      // clear optimistic provider state so UI/fallbacks can run
+      try { activeEip1193Provider = null; } catch (e) {}
+      // show reconnect banner with a CTA (concise)
+      showBanner('WalletConnect session expired — please reconnect', 'warning', [
+        { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } },
+      ]);
+      // attempt to re-open modal to prompt a fresh session (best-effort)
+      try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn('Failed to open AppKit modal for reconnect', e); }
+    } catch (e) { console.warn('handleExpiredWalletConnectSession error', e); }
+  }
+
   window.addEventListener('unhandledrejection', ev => {
-    try { const reasonStr = (ev.reason && (ev.reason.stack || ev.reason.message || String(ev.reason))) || ''; if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js')) { try { ev.preventDefault(); } catch (e) {} console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)'); return; } if (reasonStr.includes('No matching key') || reasonStr.includes("session topic doesn't exist")) { try { ev.preventDefault(); } catch (e) {} console.warn('Suppressed WalletConnect session-topic error'); return; } } catch (e) {}
+    try {
+      const reasonStr = (ev.reason && (ev.reason.stack || ev.reason.message || String(ev.reason))) || '';
+      if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js')) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)');
+        return;
+      }
+      if (reasonStr.includes('No matching key') || reasonStr.includes("session topic doesn't exist") || reasonStr.includes('session topic')) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect session-topic error');
+        handleExpiredWalletConnectSession(reasonStr);
+        return;
+      }
+    } catch (e) {}
   });
+
   window.addEventListener('error', ev => {
-    try { const msg = ev && (ev.error && (ev.error.stack || ev.error.message) || ev.message || ''); const msgStr = String(msg || ''); if (msgStr.includes('setDefaultChain') || msgStr.includes('browser-ponyfill.js')) { try { ev.preventDefault(); } catch (e) {} console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)'); return; } console.error('Global error:', ev.error || ev.message, ev); } catch (e) {}
+    try {
+      const msg = ev && (ev.error && (ev.error.stack || ev.error.message) || ev.message || '');
+      const msgStr = String(msg || '');
+      if (msgStr.includes('setDefaultChain') || msgStr.includes('browser-ponyfill.js')) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)');
+        return;
+      }
+      if (msgStr.includes('No matching key') || msgStr.includes("session topic doesn't exist") || msgStr.includes('session topic')) {
+        try { ev.preventDefault(); } catch (e) {}
+        console.warn('Suppressed WalletConnect session-topic error');
+        handleExpiredWalletConnectSession(msgStr);
+        return;
+      }
+      console.error('Global error:', ev.error || ev.message, ev);
+    } catch (e) {}
   });
 }
 
