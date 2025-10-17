@@ -595,12 +595,11 @@ if (typeof window !== 'undefined') {
       console.warn('Detected expired WalletConnect session/topic:', __lastWcErrorDetail);
       // clear optimistic provider state so UI/fallbacks can run
       try { activeEip1193Provider = null; } catch (e) {}
-      // show reconnect banner with a CTA (concise)
-      showBanner('WalletConnect session expired — please reconnect', 'warning', [
+      // show reconnect banner with a CTA (do NOT auto-open modal)
+      showBanner('WalletConnect session expired — please reconnect. Try switching networks (Wi‑Fi ↔ LTE) or use a VPN if your network blocks relay.walletconnect.org.', 'warning', [
         { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } },
       ]);
-      // attempt to re-open modal to prompt a fresh session (best-effort)
-      try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn('Failed to open AppKit modal for reconnect', e); }
+      // do not re-open modal automatically to avoid surprising deep-links; user must click Reconnect
     } catch (e) { console.warn('handleExpiredWalletConnectSession error', e); }
   }
 
@@ -644,7 +643,23 @@ if (typeof window !== 'undefined') {
 
 // ----- initialization -----
 export function init() {
-  connectBtn = document.getElementById('connectBtn'); networksRow = document.getElementById('networksRow'); bannerContainer = document.createElement('div'); bannerContainer.style.margin = '12px 0'; const header = document.querySelector('header'); if (header) header.appendChild(bannerContainer);
+  connectBtn = document.getElementById('connectBtn'); networksRow = document.getElementById('networksRow'); bannerContainer = document.createElement('div'); bannerContainer.style.margin = '12px 0'; const header = document.querySelector('header');
+  if (header) {
+    header.appendChild(bannerContainer);
+    try {
+      const devBtn = document.createElement('button');
+      devBtn.className = 'btn btn-sm btn-outline-secondary ms-2';
+      devBtn.textContent = 'Dump logs';
+      devBtn.style.marginLeft = '8px';
+      devBtn.addEventListener('click', () => {
+        try {
+          if (window.devDump) window.devDump();
+          showBanner('Dev dump written to console. Open DevTools to view.', 'info');
+        } catch (e) { console.warn('devDump failed', e); showBanner('devDump failed (see console)', 'danger'); }
+      });
+      header.appendChild(devBtn);
+    } catch (e) { console.debug('failed to add dev button', e); }
+  }
   connectBtn.addEventListener('click', () => connect()); renderNetworkUIOnce(); tryRestoreConnection().catch(e => console.error('restore failed', e));
 }
 
