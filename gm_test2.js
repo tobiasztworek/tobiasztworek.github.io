@@ -1012,9 +1012,9 @@ async function forceRefreshProvider() {
             }
           }
           
-          // Method 2: If no session, try to restore from AppKit connection data
+          // Method 2: If no session, try limited restore (with timeout to prevent hanging)
           if (!provider.session && provider.client) {
-            console.log('[forceRefresh] no session found - attempting to restore from AppKit data...');
+            console.log('[forceRefresh] no session found - attempting quick restore from AppKit data...');
             
             try {
               // Get connection info from AppKit modal
@@ -1029,28 +1029,36 @@ async function forceRefreshProvider() {
                   const address = parts[2];
                   console.log('[forceRefresh] extracted chain:', chainId, 'address:', address);
                   
-                  // Try to manually create session-like state for the provider
+                  // Try quick activation with timeout to prevent hanging
+                  console.log('[forceRefresh] attempting quick provider activation...');
+                  
                   try {
-                    console.log('[forceRefresh] attempting to activate provider with connection data...');
-                    
-                    // Method A: Try enable with specific parameters
-                    if (typeof provider.enable === 'function') {
-                      const enableResult = await provider.enable();
-                      console.log('[forceRefresh] provider.enable() result:', enableResult);
-                    }
-                    
-                    // Method B: Try connect with chain info
-                    if (typeof provider.connect === 'function') {
-                      const connectResult = await provider.connect({ chainId });
-                      console.log('[forceRefresh] provider.connect() result:', connectResult);
-                    }
-                    
-                    // Method C: Check if session appeared after these calls
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    console.log('[forceRefresh] session state after activation attempts:', !!provider.session);
-                    
-                  } catch (activationError) {
-                    console.warn('[forceRefresh] provider activation failed:', activationError);
+                    // Wrap activation attempts in timeout promise
+                    await Promise.race([
+                      (async () => {
+                        // Method A: Try enable with specific parameters
+                        if (typeof provider.enable === 'function') {
+                          const enableResult = await provider.enable();
+                          console.log('[forceRefresh] provider.enable() result:', enableResult);
+                        }
+                        
+                        // Method B: Try connect with chain info
+                        if (typeof provider.connect === 'function') {
+                          const connectResult = await provider.connect({ chainId });
+                          console.log('[forceRefresh] provider.connect() result:', connectResult);
+                        }
+                        
+                        // Method C: Check if session appeared after these calls
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        console.log('[forceRefresh] session state after activation attempts:', !!provider.session);
+                      })(),
+                      // Timeout after 3 seconds to prevent hanging
+                      new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Activation timeout')), 3000)
+                      )
+                    ]);
+                  } catch (timeoutError) {
+                    console.warn('[forceRefresh] provider activation timed out or failed:', timeoutError.message);
                   }
                 }
               }
@@ -1059,33 +1067,51 @@ async function forceRefreshProvider() {
               console.warn('[forceRefresh] session restore attempt failed:', restoreError);
             }
             
-            // Fallback: wait a bit for session to appear
+            // Fallback: wait briefly for session to appear (but don't wait too long)
             if (!provider.session) {
-              console.log('[forceRefresh] still no session - waiting for initialization...');
+              console.log('[forceRefresh] still no session - waiting briefly for initialization...');
               let waitAttempts = 0;
-              while (!provider.session && waitAttempts < 3) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
+              while (!provider.session && waitAttempts < 2) { // Reduced from 3 to 2 attempts
+                await new Promise(resolve => setTimeout(resolve, 800)); // Reduced from 1500ms to 800ms
                 waitAttempts++;
-                console.log(`[forceRefresh] session wait attempt ${waitAttempts}/3, session:`, !!provider.session);
+                console.log(`[forceRefresh] session wait attempt ${waitAttempts}/2, session:`, !!provider.session);
+              }
+              
+              // If still no session, accept provider anyway - it might work for some operations
+              if (!provider.session) {
+                console.log('[forceRefresh] no session after waiting - continuing anyway as provider might still work');
               }
             }
           }
           
-          // Try different methods to enable the provider
-          if (typeof provider.enable === 'function') {
-            await provider.enable();
-            console.log('[forceRefresh] provider.enable() succeeded');
-          } else if (typeof provider.connect === 'function') {
-            await provider.connect();
-            console.log('[forceRefresh] provider.connect() succeeded');
-          } else {
-            console.log('[forceRefresh] no enable/connect method found, checking session state');
-            if (provider.session && provider.session.namespaces) {
-              console.log('[forceRefresh] provider has valid session, should be ready');
-            }
+          // Try different methods to enable the provider (with timeout)
+          try {
+            await Promise.race([
+              (async () => {
+                if (typeof provider.enable === 'function') {
+                  await provider.enable();
+                  console.log('[forceRefresh] provider.enable() succeeded');
+                } else if (typeof provider.connect === 'function') {
+                  await provider.connect();
+                  console.log('[forceRefresh] provider.connect() succeeded');
+                } else {
+                  console.log('[forceRefresh] no enable/connect method found, checking session state');
+                  if (provider.session && provider.session.namespaces) {
+                    console.log('[forceRefresh] provider has valid session, should be ready');
+                  }
+                }
+              })(),
+              // Timeout after 5 seconds to prevent hanging
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Enable/connect timeout')), 5000)
+              )
+            ]);
+          } catch (enableError) {
+            console.warn('[forceRefresh] provider enable/connect failed or timed out:', enableError.message);
+            // Continue anyway - sometimes the provider still works
           }
         } catch (e) {
-          console.warn('[forceRefresh] provider enable/connect failed:', e);
+          console.warn('[forceRefresh] WalletConnect provider setup failed:', e);
           // Continue anyway - sometimes it still works
         }
       }
