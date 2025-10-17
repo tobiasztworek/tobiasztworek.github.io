@@ -69,6 +69,24 @@ export function initAppKit() {
       projectId,
       features: { connectMethodsOrder: ['wallet'] },
     });
+    // lightweight probe: watch for provider becoming available after modal init
+    try {
+      let probeCount = 0;
+      const pid = setInterval(() => {
+        probeCount++;
+        try {
+          const p = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null;
+          if (p) {
+            console.log('[appkit probe] modal.getProvider() became available', p);
+            try { console.log('[appkit probe] provider keys ->', Object.keys(p)); } catch (e) {}
+            // attach provider listeners if missing
+            try { attachProviderEventListeners(p); } catch (e) {}
+            clearInterval(pid);
+          }
+        } catch (e) { /* ignore */ }
+        if (probeCount > 100) clearInterval(pid);
+      }, 300);
+    } catch (e) {}
     return modal;
   } catch (e) {
     console.error('initAppKit error', e);
@@ -292,6 +310,8 @@ async function connect() {
       connectBtn.textContent = 'Connected';
       clearBanner();
       renderNetworkUIOnce();
+      // attach provider listeners right away if possible
+      try { attachProviderEventListeners(providerCandidate); } catch (e) {}
       // Finalize in background; if finalization fails (expired session), show reconnect CTA.
       (async () => {
         const finalized = await finalizeModalProvider(providerCandidate).catch(() => false);
@@ -307,6 +327,23 @@ async function connect() {
       })();
     } catch (e) { console.warn('providerCandidate probe failed', e); }
   }
+  // additional probe: if modal.getProvider appears after connect, attach listeners
+  try {
+    let probeCount2 = 0;
+    const pid2 = setInterval(() => {
+      probeCount2++;
+      try {
+        const p2 = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null;
+        if (p2) {
+          console.log('[connect probe] modal.getProvider() is now available', p2);
+          try { console.log('[connect probe] provider keys ->', Object.keys(p2)); } catch (e) {}
+          try { attachProviderEventListeners(p2); } catch (e) {}
+          clearInterval(pid2);
+        }
+      } catch (e) {}
+      if (probeCount2 > 100) clearInterval(pid2);
+    }, 400);
+  } catch (e) {}
   if (!getActiveProvider()) {
     const injectedFound = await waitForInjectedProvider(5000);
     if (!injectedFound) { showBanner('No injected wallet detected. Open AppKit modal to connect or install MetaMask.', 'warning', [ { label: 'Open modal', onClick: () => { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } } ]); return; }
@@ -578,7 +615,8 @@ if (typeof window !== 'undefined') {
       if (reasonStr.includes('No matching key') || reasonStr.includes("session topic doesn't exist") || reasonStr.includes('session topic')) {
         try { ev.preventDefault(); } catch (e) {}
         console.warn('Suppressed WalletConnect session-topic error');
-        handleExpiredWalletConnectSession(reasonStr);
+        // forward the full error object so we capture stack + details
+        handleExpiredWalletConnectSession(reasonStr, ev.reason);
         return;
       }
     } catch (e) {}
@@ -596,7 +634,7 @@ if (typeof window !== 'undefined') {
       if (msgStr.includes('No matching key') || msgStr.includes("session topic doesn't exist") || msgStr.includes('session topic')) {
         try { ev.preventDefault(); } catch (e) {}
         console.warn('Suppressed WalletConnect session-topic error');
-        handleExpiredWalletConnectSession(msgStr);
+        handleExpiredWalletConnectSession(msgStr, ev.error || ev);
         return;
       }
       console.error('Global error:', ev.error || ev.message, ev);
