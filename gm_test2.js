@@ -599,6 +599,15 @@ if (typeof window !== 'undefined') {
       showBanner('WalletConnect session expired — please reconnect. Try switching networks (Wi‑Fi ↔ LTE) or use a VPN if your network blocks relay.walletconnect.org.', 'warning', [
         { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } },
       ]);
+      // perform a safe reset of local modal/provider state so stale session objects don't linger
+      try {
+        console.warn('Resetting local AppKit/modal/provider state due to expired WalletConnect session/topic');
+        try { if (modal && typeof modal.close === 'function') { modal.close(); } } catch (e) { console.debug('modal.close failed', e); }
+        try { modal = null; } catch (e) {}
+        try { activeEip1193Provider = null; } catch (e) {}
+        try { signer = null; } catch (e) {}
+        // we keep networksRendered as-is to avoid re-render churn; UI will show reconnect banner
+      } catch (e) { console.debug('safe reset failed', e); }
       // do not re-open modal automatically to avoid surprising deep-links; user must click Reconnect
     } catch (e) { console.warn('handleExpiredWalletConnectSession error', e); }
   }
