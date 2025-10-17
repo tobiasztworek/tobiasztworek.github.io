@@ -841,6 +841,48 @@ async function forceRefreshProvider() {
     
     // If modal doesn't show connected state, don't try to extract provider
     if (!isModalConnected) {
+      console.log('[forceRefresh] modal is not in connected state - checking for desync issues...');
+      
+      // Enhanced diagnostics for AppKit desync issues
+      try {
+        console.log('[forceRefresh] modal object available:', !!modal);
+        if (modal) {
+          console.log('[forceRefresh] modal methods available:', {
+            getProvider: typeof modal.getProvider,
+            getIsConnectedState: typeof modal.getIsConnectedState,
+            getCaipAddress: typeof modal.getCaipAddress
+          });
+          
+          // Check for any internal state that might indicate connection
+          const modalKeys = Object.keys(modal).slice(0, 20); // First 20 keys to avoid spam
+          console.log('[forceRefresh] modal keys sample:', modalKeys);
+        }
+        
+        // Check localStorage for AppKit connection data
+        if (typeof localStorage !== 'undefined') {
+          const appkitKeys = Object.keys(localStorage).filter(key => 
+            key.includes('appkit') || key.includes('walletconnect') || key.includes('reown')
+          );
+          console.log('[forceRefresh] localStorage AppKit keys:', appkitKeys);
+          
+          // Check specific keys that might indicate connection
+          appkitKeys.forEach(key => {
+            try {
+              const value = localStorage.getItem(key);
+              if (value && value.length < 500) { // Only log short values to avoid spam
+                console.log(`[forceRefresh] localStorage[${key}]:`, value);
+              } else if (value) {
+                console.log(`[forceRefresh] localStorage[${key}]: [large data ${value.length} chars]`);
+              }
+            } catch (e) {
+              console.debug(`[forceRefresh] failed to read localStorage[${key}]:`, e);
+            }
+          });
+        }
+      } catch (e) {
+        console.debug('[forceRefresh] desync diagnostics failed:', e);
+      }
+      
       console.log('[forceRefresh] modal is not in connected state - skipping provider extraction');
       return false;
     }
@@ -949,14 +991,62 @@ async function forceRefreshProvider() {
             }
           }
           
-          // Method 2: If no session, wait a bit for it to initialize
+          // Method 2: If no session, try to restore from AppKit connection data
           if (!provider.session && provider.client) {
-            console.log('[forceRefresh] waiting for WalletConnect session initialization...');
-            let waitAttempts = 0;
-            while (!provider.session && waitAttempts < 5) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
-              waitAttempts++;
-              console.log(`[forceRefresh] session wait attempt ${waitAttempts}/5, session:`, !!provider.session);
+            console.log('[forceRefresh] no session found - attempting to restore from AppKit data...');
+            
+            try {
+              // Get connection info from AppKit modal
+              const caipAddress = modal?.getCaipAddress?.();
+              console.log('[forceRefresh] AppKit caipAddress for session restore:', caipAddress);
+              
+              if (caipAddress) {
+                // Extract chain and address from CAIP format (eip155:84532:0x...)
+                const parts = caipAddress.split(':');
+                if (parts.length === 3) {
+                  const chainId = parseInt(parts[1]);
+                  const address = parts[2];
+                  console.log('[forceRefresh] extracted chain:', chainId, 'address:', address);
+                  
+                  // Try to manually create session-like state for the provider
+                  try {
+                    console.log('[forceRefresh] attempting to activate provider with connection data...');
+                    
+                    // Method A: Try enable with specific parameters
+                    if (typeof provider.enable === 'function') {
+                      const enableResult = await provider.enable();
+                      console.log('[forceRefresh] provider.enable() result:', enableResult);
+                    }
+                    
+                    // Method B: Try connect with chain info
+                    if (typeof provider.connect === 'function') {
+                      const connectResult = await provider.connect({ chainId });
+                      console.log('[forceRefresh] provider.connect() result:', connectResult);
+                    }
+                    
+                    // Method C: Check if session appeared after these calls
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.log('[forceRefresh] session state after activation attempts:', !!provider.session);
+                    
+                  } catch (activationError) {
+                    console.warn('[forceRefresh] provider activation failed:', activationError);
+                  }
+                }
+              }
+              
+            } catch (restoreError) {
+              console.warn('[forceRefresh] session restore attempt failed:', restoreError);
+            }
+            
+            // Fallback: wait a bit for session to appear
+            if (!provider.session) {
+              console.log('[forceRefresh] still no session - waiting for initialization...');
+              let waitAttempts = 0;
+              while (!provider.session && waitAttempts < 3) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                waitAttempts++;
+                console.log(`[forceRefresh] session wait attempt ${waitAttempts}/3, session:`, !!provider.session);
+              }
             }
           }
           
@@ -1511,7 +1601,11 @@ export function init() {
       header.appendChild(emergencyBtn);
     } catch (e) { console.debug('failed to add dev buttons', e); }
   }
-  connectBtn.addEventListener('click', () => connect()); renderNetworkUIOnce(); 
+  connectBtn.addEventListener('click', () => { 
+    console.log('🔘 [CLICK] Connect button clicked - calling connect()'); 
+    connect(); 
+  }); 
+  renderNetworkUIOnce(); 
   tryRestoreConnection().catch(e => console.error('restore failed', e));
   
   // Start auto-monitoring for modal/provider mismatches
