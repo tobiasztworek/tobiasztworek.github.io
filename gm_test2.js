@@ -1352,6 +1352,15 @@ async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window
 async function tryRestoreConnection() {
   console.log('🔄 [FUNCTION] tryRestoreConnection() STARTED');
   console.log('[tryRestoreConnection] Starting connection restore process...');
+  
+  // Check if user has manually disconnected - respect their choice
+  const connectionStatus = localStorage.getItem('@appkit/connection_status');
+  if (connectionStatus === 'disconnected') {
+    console.log('[tryRestoreConnection] User manually disconnected - skipping auto-restore');
+    console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - MANUAL DISCONNECT');
+    return false;
+  }
+  
   try {
     // First try standard AppKit provider restoration
     if (modal && typeof modal.getProvider === 'function') {
