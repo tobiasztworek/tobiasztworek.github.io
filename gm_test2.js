@@ -17,6 +17,7 @@ let modal = null; // lazy AppKit modal
 let activeEip1193Provider = null; // chosen provider
 let signer = null;
 let networksRendered = false;
+let userInitiatedConnection = false; // Track if user manually triggered connection
 
 // UI elements (populated during init)
 let connectBtn, bannerContainer, networksRow;
@@ -85,7 +86,7 @@ export function initAppKit() {
           } else if (probeCount === 10 && modal && !activeEip1193Provider) {
             // After 3 seconds (10 * 300ms), try forceRefreshProvider if no standard provider
             console.log('[appkit probe] No standard provider after 3s, trying forceRefreshProvider...');
-            forceRefreshProvider().catch(e => console.debug('appkit probe refresh failed', e));
+            forceRefreshProvider(false).catch(e => console.debug('appkit probe refresh failed', e)); // Automatic
           }
         } catch (e) { /* ignore */ }
         if (probeCount > 100) clearInterval(pid);
@@ -123,7 +124,7 @@ export function initAppKit() {
               
               // Modal shows connected but we don't have provider - try to refresh
               console.log('[modal-state] Modal connected but no active provider - refreshing...');
-              const success = await forceRefreshProvider().catch(e => false);
+              const success = await forceRefreshProvider(false).catch(e => false); // Automatic
               if (success) {
                 lastSuccessfulConnection = Date.now();
               }
@@ -382,6 +383,8 @@ async function switchToNetwork(net) {
 // ----- connect / restore -----
 async function connect() {
   console.log('🔵 [FUNCTION] connect() STARTED');
+  userInitiatedConnection = true; // Mark this as user-initiated
+  
   const relayOk = await isRelayReachable().catch(() => false);
   if (!relayOk) {
     showBanner('WalletConnect relay unreachable — try connecting with an injected wallet or check your network.', 'warning', [ { label: 'Use injected', onClick: () => tryUseInjectedNow() }, { label: 'Retry', onClick: () => connect() } ]);
@@ -424,7 +427,7 @@ async function connect() {
     // If modal.getProvider() returns null but modal exists, try to force refresh provider
     console.log('[connect] modal.getProvider() returned null, attempting forceRefreshProvider...');
     if (modal && typeof forceRefreshProvider === 'function' && !forceRefreshInProgress) {
-      const refreshSuccess = await forceRefreshProvider().catch(() => false);
+      const refreshSuccess = await forceRefreshProvider(true).catch(() => false); // User-initiated
       if (refreshSuccess) {
         console.log('[connect] forceRefreshProvider succeeded - provider should be available now');
         lastSuccessfulConnection = Date.now();
@@ -447,7 +450,7 @@ async function connect() {
         } else if (probeCount2 === 10 && modal && !activeEip1193Provider) {
           // After 4 seconds (10 * 400ms), if still no provider, try forceRefresh
           console.log('[connect probe] still no provider after 4s, trying forceRefreshProvider...');
-          const refreshSuccess = await forceRefreshProvider().catch(() => false);
+          const refreshSuccess = await forceRefreshProvider(true).catch(() => false); // User-initiated
           if (refreshSuccess) {
             clearInterval(pid2);
           }
@@ -463,6 +466,17 @@ async function connect() {
   }
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
   signer = await provider.getSigner(); connectBtn.textContent = 'Connected'; clearBanner(); renderNetworkUIOnce(); await updateCurrentNetworkStats();
+  
+  // Reset broken session counters on successful connection
+  if (brokenSessionCount > 0) {
+    console.log('[connect] Successful connection - resetting broken session counters');
+    brokenSessionCount = 0;
+    brokenSessionCooldownActive = false;
+  }
+  
+  // Reset user-initiated flag after successful connection
+  userInitiatedConnection = false;
+  
   console.log('🔵 [FUNCTION] connect() COMPLETED');
 }
 
@@ -701,7 +715,7 @@ function startAutoProviderMonitor() {
         // Add delay for mobile provider initialization
         setTimeout(async () => {
           if (!activeEip1193Provider && !forceRefreshInProgress) { // Check again after delay
-            const success = await forceRefreshProvider().catch(() => false);
+            const success = await forceRefreshProvider(false).catch(() => false); // Automatic
             if (success) {
               console.log('[auto-monitor] Auto-refresh succeeded!');
               lastSuccessfulConnection = Date.now();
@@ -782,7 +796,7 @@ function setupVisibilityChangeDetection() {
             // Add extra delay for mobile wallet initialization
             setTimeout(async () => {
               if (!activeEip1193Provider) {
-                await forceRefreshProvider().catch(e => console.debug('visibility refresh failed', e));
+                await forceRefreshProvider(false).catch(e => console.debug('visibility refresh failed', e)); // Automatic
               }
             }, 1500);
           }
@@ -810,7 +824,7 @@ function setupVisibilityChangeDetection() {
             console.log('[focus] Modal connected but no provider - waiting before auto-refresh...');
             setTimeout(async () => {
               if (!activeEip1193Provider) {
-                await forceRefreshProvider().catch(e => console.debug('focus refresh failed', e));
+                await forceRefreshProvider(false).catch(e => console.debug('focus refresh failed', e)); // Automatic
               }
             }, 1500);
           }
@@ -827,11 +841,37 @@ let forceRefreshInProgress = false;
 
 // Broken session tracking to prevent infinite retry loops
 let lastBrokenSessionTime = 0;
+let brokenSessionCount = 0;
+let brokenSessionCooldownActive = false;
 const BROKEN_SESSION_COOLDOWN = 30000; // 30 seconds cooldown
+const MAX_BROKEN_SESSION_ATTEMPTS = 3; // Max broken sessions before extended cooldown
+const EXTENDED_COOLDOWN = 120000; // 2 minutes extended cooldown
 
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
-async function forceRefreshProvider() {
+async function forceRefreshProvider(userInitiated = false) {
   console.log('🟠 [FUNCTION] forceRefreshProvider() STARTED');
+  
+  // Check if we're in extended cooldown period due to repeated broken sessions
+  if (brokenSessionCooldownActive && !userInitiated) {
+    const now = Date.now();
+    const timeSinceLastBroken = now - lastBrokenSessionTime;
+    const cooldownTime = brokenSessionCount >= MAX_BROKEN_SESSION_ATTEMPTS ? EXTENDED_COOLDOWN : BROKEN_SESSION_COOLDOWN;
+    
+    if (timeSinceLastBroken < cooldownTime) {
+      console.warn('[forceRefresh] In broken session cooldown period - skipping automatic refresh');
+      const remainingTime = Math.ceil((cooldownTime - timeSinceLastBroken) / 1000);
+      if (userInitiated) {
+        showBanner(`WalletConnect session issues detected - please wait ${remainingTime}s before reconnecting`, 'info');
+      }
+      return false;
+    } else {
+      // Cooldown expired, reset counters
+      brokenSessionCooldownActive = false;
+      brokenSessionCount = 0;
+      console.log('[forceRefresh] Cooldown expired - resetting broken session counters');
+    }
+  }
+  
   // Prevent multiple concurrent calls
   if (forceRefreshInProgress) {
     console.log('[forceRefresh] already in progress - skipping duplicate call');
@@ -1175,14 +1215,22 @@ async function forceRefreshProvider() {
           if (isWalletConnect) {
             console.warn('[forceRefresh] WalletConnect provider has broken session - rejecting and clearing modal state');
             
-            // Check if we're in cooldown period to prevent infinite retries
+            // Increment broken session counter
+            brokenSessionCount++;
             const now = Date.now();
-            if (now - lastBrokenSessionTime < BROKEN_SESSION_COOLDOWN) {
-              console.warn('[forceRefresh] In broken session cooldown period - not clearing state again');
-              showBanner('WalletConnect session expired - please wait before reconnecting', 'info');
+            lastBrokenSessionTime = now;
+            
+            // Activate cooldown to prevent immediate retries
+            brokenSessionCooldownActive = true;
+            
+            // Check if we've exceeded max attempts
+            if (brokenSessionCount >= MAX_BROKEN_SESSION_ATTEMPTS) {
+              console.warn('[forceRefresh] Too many broken sessions detected - entering extended cooldown');
+              showBanner('Multiple WalletConnect session failures detected - please wait 2 minutes before reconnecting', 'warning');
               return false;
             }
-            lastBrokenSessionTime = now;
+            
+            console.log(`[forceRefresh] Broken session #${brokenSessionCount} detected - clearing state`);
             
             // Clear broken session state and force proper reconnection
             try {
@@ -1206,6 +1254,7 @@ async function forceRefreshProvider() {
               localStorage.setItem('@appkit/connection_status', 'disconnected');
               
               console.log('[forceRefresh] Cleared broken WalletConnect state - user will need to reconnect properly');
+              showBanner('WalletConnect session reset - please reconnect your wallet', 'info');
             } catch (clearError) {
               console.warn('[forceRefresh] Error clearing broken state:', clearError);
               
@@ -1290,6 +1339,14 @@ async function forceRefreshProvider() {
         
         showBanner('Provider refreshed successfully! Connecting...', 'success');
       } catch (e) { console.debug('UI update failed', e); }
+      
+      // Reset broken session counters on successful provider refresh
+      if (brokenSessionCount > 0) {
+        console.log('[forceRefresh] Successful provider refresh - resetting broken session counters');
+        brokenSessionCount = 0;
+        brokenSessionCooldownActive = false;
+      }
+      
       return true;
     } else {
       console.warn('[forceRefresh] no usable provider found');
@@ -1403,7 +1460,7 @@ async function tryRestoreConnection() {
         
         if (modalConnected) {
           console.log('[tryRestoreConnection] Modal shows connected state, attempting forceRefreshProvider...');
-          const refreshSuccess = await forceRefreshProvider().catch((e) => {
+          const refreshSuccess = await forceRefreshProvider(false).catch((e) => { // Automatic
             console.debug('forceRefreshProvider failed in tryRestoreConnection', e);
             return false;
           });
@@ -1418,7 +1475,7 @@ async function tryRestoreConnection() {
     } else if (modal) {
       // If modal exists but getProvider is not a function, still try forceRefreshProvider
       console.log('[tryRestoreConnection] Modal exists but getProvider not available, trying forceRefreshProvider...');
-      const refreshSuccess = await forceRefreshProvider().catch(() => false);
+      const refreshSuccess = await forceRefreshProvider(false).catch(() => false); // Automatic
       if (refreshSuccess) {
         return true;
       }
@@ -1742,7 +1799,7 @@ export function init() {
         
         if (modalConnected) {
           console.log('[delayed-check] Modal appears connected, trying forceRefreshProvider...');
-          await forceRefreshProvider().catch(e => console.debug('delayed refresh failed', e));
+          await forceRefreshProvider(false).catch(e => console.debug('delayed refresh failed', e)); // Automatic
         } else {
           console.log('[delayed-check] Modal not connected, no action needed');
         }
