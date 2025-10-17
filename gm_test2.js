@@ -485,6 +485,62 @@ function attachProviderEventListeners(p) {
   } catch (e) { console.debug('attachProviderEventListeners error', e); }
 }
 
+// Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
+function forceRefreshProvider() {
+  try {
+    console.log('[forceRefresh] attempting to extract provider from connected modal...');
+    if (!modal) { console.warn('no modal available'); return false; }
+    
+    // try multiple ways to get the provider
+    let provider = null;
+    try { provider = modal.getProvider && modal.getProvider(); } catch (e) {}
+    if (!provider) {
+      try { provider = modal.wagmiConfig?.state?.connections?.values()?.next()?.value?.connector?.provider; } catch (e) {}
+    }
+    if (!provider) {
+      try { provider = modal.wagmiConfig?.getClient()?.transport?.provider; } catch (e) {}
+    }
+    if (!provider) {
+      // try accessing internal state (adapter-specific)
+      try {
+        const adapters = modal.adapters || [];
+        for (const adapter of adapters) {
+          if (adapter && typeof adapter.getProvider === 'function') {
+            const p = adapter.getProvider();
+            if (p) { provider = p; break; }
+          }
+        }
+      } catch (e) {}
+    }
+    
+    console.log('[forceRefresh] extracted provider:', provider);
+    if (provider && typeof provider.request === 'function') {
+      activeEip1193Provider = provider;
+      try { attachProviderEventListeners(provider); } catch (e) {}
+      console.log('[forceRefresh] SUCCESS - provider set as active');
+      
+      // update UI
+      try {
+        connectBtn.textContent = 'Connected';
+        clearBanner();
+        renderNetworkUIOnce();
+        signer = (getEthersProvider())?.getSigner();
+        updateAllStats().catch(e => console.debug('updateAllStats failed', e));
+        showBanner('Provider refreshed successfully!', 'success');
+      } catch (e) { console.debug('UI update failed', e); }
+      return true;
+    } else {
+      console.warn('[forceRefresh] no usable provider found');
+      showBanner('No usable provider found in modal - try reconnecting', 'warning');
+      return false;
+    }
+  } catch (e) {
+    console.error('forceRefreshProvider failed', e);
+    showBanner('Provider refresh failed - see console', 'danger');
+    return false;
+  }
+}
+
 // Developer diagnostic dump (button + shortcut)
 function devDump() {
   try {
@@ -506,6 +562,7 @@ function devDump() {
       }
     } catch (e) {}
     console.log('Tip: on mobile, open browser devtools (remote) or use Ctrl+Shift+D to dump last WC error; include __lastWcErrorDetail in bug reports.');
+    console.log('Manual fix: if modal shows connected but app shows "no wallet", run: forceRefreshProvider()');
     console.groupEnd();
   } catch (e) { console.error('devDump failed', e); }
 }
@@ -517,10 +574,11 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Expose devDump to the global window so it can be invoked from console
+// Expose devDump and forceRefreshProvider to the global window so they can be invoked from console
 try {
   if (typeof window !== 'undefined') {
     window.devDump = devDump;
+    window.forceRefreshProvider = forceRefreshProvider;
   }
 } catch (e) {}
 
@@ -666,8 +724,19 @@ export function init() {
           showBanner('Dev dump written to console. Open DevTools to view.', 'info');
         } catch (e) { console.warn('devDump failed', e); showBanner('devDump failed (see console)', 'danger'); }
       });
+      
+      // Add "Refresh Provider" button next to devBtn
+      const refreshBtn = document.createElement('button');
+      refreshBtn.className = 'btn btn-sm btn-outline-warning ms-2';
+      refreshBtn.textContent = 'Refresh Provider';
+      refreshBtn.addEventListener('click', () => {
+        try {
+          if (window.forceRefreshProvider) window.forceRefreshProvider();
+        } catch (e) { console.warn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
+      });
       header.appendChild(devBtn);
-    } catch (e) { console.debug('failed to add dev button', e); }
+      header.appendChild(refreshBtn);
+    } catch (e) { console.debug('failed to add dev buttons', e); }
   }
   connectBtn.addEventListener('click', () => connect()); renderNetworkUIOnce(); tryRestoreConnection().catch(e => console.error('restore failed', e));
 }
