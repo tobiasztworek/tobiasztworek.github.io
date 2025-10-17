@@ -486,35 +486,86 @@ function attachProviderEventListeners(p) {
 }
 
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
-function forceRefreshProvider() {
+async function forceRefreshProvider() {
   try {
     console.log('[forceRefresh] attempting to extract provider from connected modal...');
     if (!modal) { console.warn('no modal available'); return false; }
     
-    // try multiple ways to get the provider
+    // try multiple ways to get the provider from @reown/appkit with EthersAdapter
     let provider = null;
-    try { provider = modal.getProvider && modal.getProvider(); } catch (e) {}
+    
+    // method 1: standard getProvider()
+    try { 
+      provider = modal.getProvider && modal.getProvider(); 
+      console.log('[forceRefresh] modal.getProvider() result:', provider);
+    } catch (e) { console.debug('modal.getProvider failed', e); }
+    
+    // method 2: try accessing EthersAdapter directly from modal.adapters
     if (!provider) {
-      try { provider = modal.wagmiConfig?.state?.connections?.values()?.next()?.value?.connector?.provider; } catch (e) {}
-    }
-    if (!provider) {
-      try { provider = modal.wagmiConfig?.getClient()?.transport?.provider; } catch (e) {}
-    }
-    if (!provider) {
-      // try accessing internal state (adapter-specific)
       try {
         const adapters = modal.adapters || [];
+        console.log('[forceRefresh] checking adapters:', adapters.length);
         for (const adapter of adapters) {
+          console.log('[forceRefresh] adapter:', adapter?.constructor?.name);
           if (adapter && typeof adapter.getProvider === 'function') {
             const p = adapter.getProvider();
+            console.log('[forceRefresh] adapter.getProvider() result:', p);
             if (p) { provider = p; break; }
           }
         }
-      } catch (e) {}
+      } catch (e) { console.debug('adapter access failed', e); }
     }
     
-    console.log('[forceRefresh] extracted provider:', provider);
+    // method 3: try internal AppKit state (may vary by version)
+    if (!provider) {
+      try {
+        // AppKit may store provider in internal state
+        if (modal._internal?.provider) {
+          provider = modal._internal.provider;
+          console.log('[forceRefresh] found _internal.provider:', provider);
+        } else if (modal.state?.provider) {
+          provider = modal.state.provider;
+          console.log('[forceRefresh] found state.provider:', provider);
+        }
+      } catch (e) { console.debug('internal state access failed', e); }
+    }
+    
+    // method 4: check if there's a connected session and try to reconstruct provider
+    if (!provider) {
+      try {
+        // look for any EIP-1193 compatible objects in modal
+        const keys = Object.keys(modal || {});
+        console.log('[forceRefresh] modal keys:', keys);
+        for (const key of keys) {
+          try {
+            const obj = modal[key];
+            if (obj && typeof obj.request === 'function') {
+              console.log('[forceRefresh] found potential provider at modal.' + key + ':', obj);
+              provider = obj;
+              break;
+            }
+          } catch (e) {}
+        }
+      } catch (e) { console.debug('manual provider search failed', e); }
+    }
+    
+    console.log('[forceRefresh] final extracted provider:', provider);
     if (provider && typeof provider.request === 'function') {
+      // test the provider first
+      try {
+        const accounts = await provider.request({ method: 'eth_accounts' });
+        console.log('[forceRefresh] provider test - accounts:', accounts);
+        if (!accounts || !accounts.length) {
+          console.warn('[forceRefresh] provider has no accounts');
+          showBanner('Found provider but no accounts - wallet may not be connected', 'warning');
+          return false;
+        }
+      } catch (e) {
+        console.warn('[forceRefresh] provider test failed:', e);
+        showBanner('Found provider but it\'s not working - try reconnecting', 'warning');
+        return false;
+      }
+      
       activeEip1193Provider = provider;
       try { attachProviderEventListeners(provider); } catch (e) {}
       console.log('[forceRefresh] SUCCESS - provider set as active');
@@ -524,7 +575,7 @@ function forceRefreshProvider() {
         connectBtn.textContent = 'Connected';
         clearBanner();
         renderNetworkUIOnce();
-        signer = (getEthersProvider())?.getSigner();
+        signer = await (getEthersProvider())?.getSigner();
         updateAllStats().catch(e => console.debug('updateAllStats failed', e));
         showBanner('Provider refreshed successfully!', 'success');
       } catch (e) { console.debug('UI update failed', e); }
@@ -715,7 +766,7 @@ export function init() {
     header.appendChild(bannerContainer);
     try {
       const devBtn = document.createElement('button');
-      devBtn.className = 'btn btn-sm btn-outline-secondary ms-2';
+      devBtn.className = 'btn btn-sm btn-secondary ms-2';
       devBtn.textContent = 'Dump logs';
       devBtn.style.marginLeft = '8px';
       devBtn.addEventListener('click', () => {
@@ -727,11 +778,11 @@ export function init() {
       
       // Add "Refresh Provider" button next to devBtn
       const refreshBtn = document.createElement('button');
-      refreshBtn.className = 'btn btn-sm btn-outline-warning ms-2';
+      refreshBtn.className = 'btn btn-sm btn-warning ms-2';
       refreshBtn.textContent = 'Refresh Provider';
-      refreshBtn.addEventListener('click', () => {
+      refreshBtn.addEventListener('click', async () => {
         try {
-          if (window.forceRefreshProvider) window.forceRefreshProvider();
+          if (window.forceRefreshProvider) await window.forceRefreshProvider();
         } catch (e) { console.warn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
       });
       header.appendChild(devBtn);
