@@ -92,26 +92,33 @@ export function initAppKit() {
       }, 300);
     } catch (e) {}
     
-    // Subscribe to modal state changes for automatic provider refresh
+    // Subscribe to modal state changes for connection/disconnection detection
     try {
       modal.subscribeState?.((state) => {
         console.log('[modal-state] State change:', state);
-        // Only trigger refresh if modal shows connected AND we don't have active provider
-        if (state?.selectedNetworkId && !activeEip1193Provider) {
-          // Additional check: verify modal actually shows connected state
-          setTimeout(async () => {
-            try {
-              const isConnected = modal.getIsConnectedState?.();
-              const caipAddress = modal.getCaipAddress?.();
-              if (isConnected && caipAddress && !activeEip1193Provider) {
-                console.log('[modal-state] Modal truly connected but no provider - refreshing...');
-                await forceRefreshProvider().catch(e => {});
-              }
-            } catch (e) {
-              console.debug('modal-state check failed', e);
+        
+        // Check if modal is in connected state
+        setTimeout(async () => {
+          try {
+            const isConnected = modal.getIsConnectedState?.();
+            const caipAddress = modal.getCaipAddress?.();
+            const modalConnected = isConnected && caipAddress && caipAddress !== undefined;
+            
+            console.log('[modal-state] Connection check - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider);
+            
+            if (modalConnected && !activeEip1193Provider) {
+              // Modal shows connected but we don't have provider - try to refresh
+              console.log('[modal-state] Modal connected but no active provider - refreshing...');
+              await forceRefreshProvider().catch(e => {});
+            } else if (!modalConnected && activeEip1193Provider) {
+              // Modal shows disconnected but we still have provider - disconnect
+              console.log('[modal-state] Modal disconnected but still have active provider - disconnecting...');
+              handleModalDisconnection();
             }
-          }, 1000);
-        }
+          } catch (e) {
+            console.debug('modal-state check failed', e);
+          }
+        }, 500);
       });
     } catch (e) {
       console.debug('subscribeState failed', e);
@@ -511,8 +518,7 @@ function attachProviderEventListeners(p) {
     };
     safeOn('disconnect', (info) => {
       console.warn('Provider disconnect event', info);
-      activeEip1193Provider = null;
-      showBanner('Wallet disconnected. Reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+      handleModalDisconnection();
     });
     safeOn('accountsChanged', async (accounts) => {
       try {
@@ -564,6 +570,28 @@ function attachProviderEventListeners(p) {
   } catch (e) { console.debug('attachProviderEventListeners error', e); }
 }
 
+// Handle disconnection detected from modal state
+function handleModalDisconnection() {
+  console.log('[disconnect] Handling modal disconnection...');
+  
+  // Clear active provider and signer
+  activeEip1193Provider = null;
+  signer = null;
+  
+  // Update UI to disconnected state
+  if (connectBtn) {
+    connectBtn.textContent = 'Connect Wallet';
+  }
+  
+  // Clear any success banners
+  clearBanner();
+  
+  // Show disconnection message
+  showBanner('Wallet disconnected. Click "Connect Wallet" to reconnect.', 'info');
+  
+  console.log('[disconnect] Application state reset to disconnected');
+}
+
 // Auto-monitor for modal connection state vs provider availability mismatch
 let isAutoMonitoring = false;
 function startAutoProviderMonitor() {
@@ -607,6 +635,9 @@ function startAutoProviderMonitor() {
             }
           }
         }, 2000);
+      } else if (!modalConnected && activeEip1193Provider) {
+        console.log('[auto-monitor] Modal shows disconnected but we have active provider - disconnecting...');
+        handleModalDisconnection();
       }
     } catch (e) {
       console.debug('auto-monitor error', e);
@@ -619,6 +650,41 @@ function startAutoProviderMonitor() {
     clearInterval(checkInterval);
     isAutoMonitoring = false;
   }, 60000);
+}
+
+// Start persistent connection state synchronization
+function startConnectionStateSynchronization() {
+  setInterval(async () => {
+    try {
+      if (!modal) return;
+      
+      const isConnected = modal.getIsConnectedState?.();
+      const caipAddress = modal.getCaipAddress?.();
+      const modalConnected = isConnected && caipAddress && caipAddress !== undefined;
+      
+      // Check for state mismatch
+      if (modalConnected && !activeEip1193Provider) {
+        // Modal connected but app disconnected - could be a missed connection event
+        console.log('[sync] Detected missed connection - modal connected but app disconnected');
+      } else if (!modalConnected && activeEip1193Provider) {
+        // Modal disconnected but app still connected - missed disconnection event
+        console.log('[sync] Detected missed disconnection - modal disconnected but app connected');
+        handleModalDisconnection();
+      }
+      
+      // Update button text to match reality
+      if (connectBtn) {
+        const currentText = connectBtn.textContent;
+        const expectedText = activeEip1193Provider ? 'Connected' : 'Connect Wallet';
+        if (currentText !== expectedText) {
+          console.log('[sync] Correcting button text from', currentText, 'to', expectedText);
+          connectBtn.textContent = expectedText;
+        }
+      }
+    } catch (e) {
+      console.debug('[sync] Connection state sync error', e);
+    }
+  }, 5000); // Check every 5 seconds
 }
 
 // Detect when user returns from external wallet (mobile deep-link flows)
@@ -1187,6 +1253,9 @@ export function init() {
   
   // Setup detection for return from external wallet
   setupVisibilityChangeDetection();
+  
+  // Start persistent connection state synchronization
+  startConnectionStateSynchronization();
   
   // Additional delayed check for page refresh scenarios
   // Sometimes the modal needs extra time to initialize its session state
