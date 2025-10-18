@@ -71,90 +71,7 @@ export function initAppKit() {
       projectId,
       features: { connectMethodsOrder: ['wallet'] },
     });
-    // lightweight probe: watch for provider becoming available after modal init
-    try {
-      let probeCount = 0;
-      const pid = setInterval(() => {
-        probeCount++;
-        try {
-          const p = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null;
-          if (p) {
-            console.log('[appkit probe] modal.getProvider() became available', p);
-            try { console.log('[appkit probe] provider keys ->', Object.keys(p)); } catch (e) {}
-            // attach provider listeners if missing
-            try { attachProviderEventListeners(p); } catch (e) {}
-            clearInterval(pid);
-          } else if (probeCount === 10 && modal && !activeEip1193Provider) {
-            // After 3 seconds (10 * 300ms), try forceRefreshProvider if no standard provider
-            console.log('[appkit probe] No standard provider after 3s, trying forceRefreshProvider...');
-            forceRefreshProvider(false).catch(e => console.debug('appkit probe refresh failed', e)); // Automatic
-          }
-        } catch (e) { /* ignore */ }
-        if (probeCount > 100) clearInterval(pid);
-      }, 300);
-    } catch (e) {}
     
-    // Subscribe to modal state changes for connection/disconnection detection
-    try {
-      modal.subscribeState?.((state) => {
-        console.log('[modal-state] State change:', state);
-        
-        // Check if modal is in connected state
-        setTimeout(async () => {
-          try {
-            const isConnected = modal.getIsConnectedState?.();
-            const caipAddress = modal.getCaipAddress?.();
-            const modalConnected = isConnected && caipAddress && caipAddress !== undefined;
-            
-            console.log('[modal-state] Connection check - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider);
-            
-            if (modalConnected && !activeEip1193Provider && !forceRefreshInProgress) {
-              // Don't refresh provider during transaction
-              if (isTransactionInProgress) {
-                console.log('[modal-state] Transaction in progress - skipping auto-refresh');
-                return;
-              }
-              
-              // Check if user has manually disconnected - respect their choice
-              const connectionStatus = localStorage.getItem('@appkit/connection_status');
-              if (connectionStatus === 'disconnected') {
-                console.log('[modal-state] User manually disconnected - skipping auto-refresh');
-                return;
-              }
-              
-              // Check cooldown to prevent spam
-              const now = Date.now();
-              if (now - lastSuccessfulConnection < 10000) {
-                console.log('[modal-state] In cooldown period - skipping refresh');
-                return;
-              }
-              
-              // Modal shows connected but we don't have provider - try to refresh
-              console.log('[modal-state] Modal connected but no active provider - refreshing...');
-              const success = await forceRefreshProvider(false).catch(e => false); // Automatic
-              if (success) {
-                lastSuccessfulConnection = Date.now();
-              }
-            } else if (!modalConnected && activeEip1193Provider) {
-              // Check if the active provider is injected (not from modal)
-              const isInjected = activeEip1193Provider === window.ethereum;
-              if (isInjected) {
-                // Injected provider doesn't need modal to be connected - skip
-                console.log('[modal-state] Using injected provider - modal state irrelevant');
-              } else {
-                // Modal shows disconnected but we still have provider - disconnect
-                console.log('[modal-state] Modal disconnected but still have active provider - disconnecting...');
-                handleModalDisconnection();
-              }
-            }
-          } catch (e) {
-            console.debug('modal-state check failed', e);
-          }
-        }, 2000); // Increased delay to reduce conflicts
-      });
-    } catch (e) {
-      console.debug('subscribeState failed', e);
-    }
     return modal;
   } catch (e) {
     console.error('initAppKit error', e);
@@ -349,29 +266,57 @@ function renderNetworkCard(net) {
   });
   sayGmBtn.addEventListener('click', async () => {
     try {
+      console.log('🔥 [TRANSACTION] Starting GM transaction for', net.name);
       isTransactionInProgress = true; // Block provider refresh during tx
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
+      
+      console.log('[TRANSACTION] Switching to network:', net.name, net.chainId);
       const ok = await switchToNetwork(net);
-      if (!ok) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; isTransactionInProgress = false; return; }
+      if (!ok) { 
+        console.error('[TRANSACTION] Failed to switch network');
+        statusText.textContent = 'No provider'; 
+        sayGmBtn.disabled = false; 
+        isTransactionInProgress = false; 
+        return; 
+      }
+      
+      console.log('[TRANSACTION] Getting provider and signer...');
       const provider = getEthersProvider();
-      if (!provider) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; isTransactionInProgress = false; return; }
+      if (!provider) { 
+        console.error('[TRANSACTION] No provider available');
+        statusText.textContent = 'No provider'; 
+        sayGmBtn.disabled = false; 
+        isTransactionInProgress = false; 
+        return; 
+      }
+      
       const s = await provider.getSigner();
       const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
+      
+      console.log('[TRANSACTION] Fetching GM fee...');
       const feeWei = await contract.getGmFeeInEth();
+      console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+      
+      console.log('[TRANSACTION] Sending GM transaction...');
       const tx = await contract.sayGM({ value: feeWei });
+      console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
       txStatus.textContent = 'Tx sent: ' + tx.hash;
       statusText.textContent = 'Waiting for confirmation...';
       
+      console.log('[TRANSACTION] Starting receipt polling...');
       // Poll for transaction receipt using provider directly (no wallet interaction needed)
       const checkReceipt = async () => {
         try {
           const receipt = await provider.getTransactionReceipt(tx.hash);
           if (receipt) {
+            console.log('[TRANSACTION] Receipt received! Status:', receipt.status);
             if (receipt.status === 1) {
+              console.log('✅ [TRANSACTION] GM completed successfully!');
               statusText.textContent = 'GM completed successfully ☀️';
               txStatus.textContent = 'Confirmed: ' + tx.hash;
             } else {
+              console.error('❌ [TRANSACTION] Transaction failed');
               statusText.textContent = 'Transaction failed ❌';
               txStatus.textContent = 'Failed: ' + tx.hash;
             }
@@ -379,7 +324,7 @@ function renderNetworkCard(net) {
           }
           return false;
         } catch (e) {
-          console.debug('Receipt check error:', e);
+          console.debug('[TRANSACTION] Receipt check error:', e);
           return false;
         }
       };
@@ -394,20 +339,23 @@ function renderNetworkCard(net) {
         attempts++;
         // Update status to show we're still checking
         if (attempts % 5 === 0) {
+          console.log('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
           statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
         }
       }
       
       // If timeout, show pending status
       if (attempts >= maxAttempts) {
+        console.warn('⏱️ [TRANSACTION] Timeout waiting for confirmation after', attempts * 2, 'seconds');
         statusText.textContent = 'Tx pending (check explorer)';
         txStatus.textContent = 'Pending: ' + tx.hash;
       }
 // ...existing code...
     } catch (e) {
-      console.error(e);
+      console.error('❌ [TRANSACTION] Error:', e);
       statusText.textContent = 'Error in transaction';
     } finally {
+      console.log('🔥 [TRANSACTION] Transaction flow completed, clearing flags');
       isTransactionInProgress = false; // Always clear flag
       sayGmBtn.disabled = false;
     }
@@ -831,218 +779,6 @@ function handleModalDisconnection() {
   showBanner('Wallet disconnected. Click "Connect Wallet" to reconnect.', 'info');
   
   console.log('[disconnect] Application state reset to disconnected');
-}
-
-// Auto-monitor for modal connection state vs provider availability mismatch
-let isAutoMonitoring = false;
-let lastSuccessfulConnection = 0;
-
-function startAutoProviderMonitor() {
-  console.log('⏱️ [FUNCTION] startAutoProviderMonitor() CALLED');
-  if (isAutoMonitoring) return;
-  isAutoMonitoring = true;
-  console.log('[auto-monitor] Starting auto provider monitoring...');
-  
-  const checkInterval = setInterval(async () => {
-    try {
-      // Don't monitor during transaction
-      if (isTransactionInProgress) {
-        console.log('[auto-monitor] Transaction in progress - skipping check');
-        return;
-      }
-      
-      // Only monitor if we don't have an active provider but modal exists
-      if (activeEip1193Provider || !modal) return;
-      
-      // Check if modal shows connected state
-      let modalConnected = false;
-      let connectionInfo = {};
-      try {
-        // Various ways to check if modal thinks it's connected
-        connectionInfo.isConnectedState = modal.getIsConnectedState?.();
-        connectionInfo.caipAddress = modal.getCaipAddress?.();
-        connectionInfo.connectionState = modal.connectionControllerClient?.state?.isConnected;
-        
-        // Only consider connected if we have a real CAIP address AND connected state
-        modalConnected = connectionInfo.isConnectedState && 
-                        connectionInfo.caipAddress && 
-                        connectionInfo.caipAddress !== undefined &&
-                        !connectionInfo.caipAddress.includes('undefined');
-        
-        console.log('[auto-monitor] Check - modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider, 'info:', connectionInfo);
-      } catch (e) {
-        console.debug('[auto-monitor] connection check error:', e);
-      }
-      
-      if (modalConnected && !activeEip1193Provider) {
-        // Add cooldown to prevent too frequent attempts
-        const now = Date.now();
-        if (now - lastSuccessfulConnection < 10000) {
-          console.log('[auto-monitor] In cooldown period after recent connection - skipping');
-          return;
-        }
-        
-        // Don't auto-refresh if in broken session cooldown
-        const timeSinceLastBrokenSession = now - lastBrokenSessionTime;
-        if (brokenSessionCooldownActive && timeSinceLastBrokenSession < BROKEN_SESSION_COOLDOWN_MS) {
-          console.log('[auto-monitor] Skipping auto-refresh due to recent broken session cooldown');
-          return;
-        }
-        
-        console.log('[auto-monitor] Modal shows connected but no active provider - waiting before auto-refresh...');
-        // Add delay for mobile provider initialization
-        setTimeout(async () => {
-          if (!activeEip1193Provider && !forceRefreshInProgress) { // Check again after delay
-            const success = await forceRefreshProvider(false).catch(() => false); // Automatic
-            if (success) {
-              console.log('[auto-monitor] Auto-refresh succeeded!');
-              lastSuccessfulConnection = Date.now();
-            }
-          }
-        }, 3000); // Increased delay
-      } else if (!modalConnected && activeEip1193Provider) {
-        // Check if the active provider is injected (not from modal)
-        const isInjected = activeEip1193Provider === window.ethereum;
-        if (isInjected) {
-          console.log('[auto-monitor] Using injected provider - modal state irrelevant');
-        } else {
-          console.log('[auto-monitor] Modal shows disconnected but we have active provider - disconnecting...');
-          handleModalDisconnection();
-        }
-      }
-    } catch (e) {
-      console.debug('auto-monitor error', e);
-    }
-  }, 3000); // Check every 3 seconds (less frequent)
-  
-  // Stop monitoring after 60 seconds
-  setTimeout(() => {
-    console.log('[auto-monitor] Stopping auto provider monitoring');
-    clearInterval(checkInterval);
-    isAutoMonitoring = false;
-  }, 60000);
-}
-
-// Start persistent connection state synchronization
-function startConnectionStateSynchronization() {
-  setInterval(async () => {
-    try {
-      // Don't sync during transaction
-      if (isTransactionInProgress) {
-        return;
-      }
-      
-      if (!modal) return;
-      
-      const isConnected = modal.getIsConnectedState?.();
-      const caipAddress = modal.getCaipAddress?.();
-      const modalConnected = isConnected && caipAddress && caipAddress !== undefined;
-      
-      // Check for state mismatch
-      if (modalConnected && !activeEip1193Provider) {
-        // Modal connected but app disconnected - could be a missed connection event
-        console.log('[sync] Detected missed connection - modal connected but app disconnected');
-        
-        // Don't auto-refresh if in cooldown or if this just happened
-        const timeSinceLastBrokenSession = Date.now() - lastBrokenSessionTime;
-        if (brokenSessionCooldownActive && timeSinceLastBrokenSession < BROKEN_SESSION_COOLDOWN_MS) {
-          console.log('[sync] Skipping auto-refresh due to recent broken session');
-        }
-      } else if (!modalConnected && activeEip1193Provider) {
-        // Check if the active provider is injected (not from modal)
-        const isInjected = activeEip1193Provider === window.ethereum;
-        if (isInjected) {
-          console.log('[sync] Using injected provider - modal state irrelevant');
-        } else {
-          // Modal disconnected but app still connected - missed disconnection event
-          console.log('[sync] Detected missed disconnection - modal disconnected but app connected');
-          handleModalDisconnection();
-        }
-      }
-      
-      // Update button text to match reality
-      if (connectBtn) {
-        const currentText = connectBtn.textContent;
-  const expectedText = activeEip1193Provider ? 'Disconnect' : 'Connect Wallet';
-        if (currentText !== expectedText) {
-          console.log('[sync] Correcting button text from', currentText, 'to', expectedText);
-          connectBtn.textContent = expectedText;
-        }
-      }
-    } catch (e) {
-      console.debug('[sync] Connection state sync error', e);
-    }
-  }, 5000); // Check every 5 seconds
-}
-
-// Detect when user returns from external wallet (mobile deep-link flows)
-function setupVisibilityChangeDetection() {
-  if (typeof document === 'undefined') return;
-  
-  document.addEventListener('visibilitychange', async () => {
-    if (!document.hidden && modal && !activeEip1193Provider) {
-      console.log('[visibility] Page became visible - checking for provider...');
-      setTimeout(async () => {
-        try {
-          // Check if user has manually disconnected - respect their choice
-          const connectionStatus = localStorage.getItem('@appkit/connection_status');
-          if (connectionStatus === 'disconnected') {
-            console.log('[visibility] User manually disconnected - skipping auto-refresh');
-            return;
-          }
-          
-          const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
-          if (modalConnected && !activeEip1193Provider) {
-            console.log('[visibility] Modal connected but no provider - waiting before auto-refresh...');
-            // Add extra delay for mobile wallet initialization
-            setTimeout(async () => {
-              if (!activeEip1193Provider) {
-                await forceRefreshProvider(false).catch(e => console.debug('visibility refresh failed', e)); // Automatic
-              }
-            }, 1500);
-          }
-        } catch (e) {
-          console.debug('visibility check error', e);
-        }
-      }, 500);
-    }
-  });
-  
-  window.addEventListener('focus', async () => {
-    if (modal && !activeEip1193Provider) {
-      console.log('[focus] Window gained focus - checking for provider...');
-      setTimeout(async () => {
-        try {
-          // Check if user has manually disconnected - respect their choice
-          const connectionStatus = localStorage.getItem('@appkit/connection_status');
-          if (connectionStatus === 'disconnected') {
-            console.log('[focus] User manually disconnected - skipping auto-refresh');
-            return;
-          }
-          
-          // Don't auto-refresh if in broken session cooldown
-          const now = Date.now();
-          const timeSinceLastBrokenSession = now - lastBrokenSessionTime;
-          if (brokenSessionCooldownActive && timeSinceLastBrokenSession < BROKEN_SESSION_COOLDOWN_MS) {
-            console.log('[focus] Skipping auto-refresh due to recent broken session cooldown');
-            return;
-          }
-          
-          const modalConnected = modal.getIsConnectedState?.() || modal.getCaipAddress?.();
-          if (modalConnected && !activeEip1193Provider) {
-            console.log('[focus] Modal connected but no provider - waiting before auto-refresh...');
-            setTimeout(async () => {
-              if (!activeEip1193Provider) {
-                await forceRefreshProvider(false).catch(e => console.debug('focus refresh failed', e)); // Automatic
-              }
-            }, 1500);
-          }
-        } catch (e) {
-          console.debug('focus check error', e);
-        }
-      }, 500);
-    }
-  });
 }
 
 // Global lock to prevent multiple concurrent forceRefreshProvider calls
@@ -1937,15 +1673,6 @@ export function init() {
   }); 
   renderNetworkUIOnce(); 
   tryRestoreConnection().catch(e => console.error('restore failed', e));
-  
-  // Start auto-monitoring for modal/provider mismatches
-  setTimeout(() => startAutoProviderMonitor(), 3000);
-  
-  // Setup detection for return from external wallet
-  setupVisibilityChangeDetection();
-  
-  // Start persistent connection state synchronization
-  startConnectionStateSynchronization();
   
   // Additional delayed check for page refresh scenarios
   // Sometimes the modal needs extra time to initialize its session state
