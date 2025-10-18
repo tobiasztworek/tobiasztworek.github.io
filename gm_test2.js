@@ -356,9 +356,26 @@ function renderNetworkCard(net) {
         }
       }
       
+      // Fetch GM fee using public RPC (read-only, no wallet interaction needed)
       console.log('[TRANSACTION] Fetching GM fee...');
-      const feeWei = await contract.getGmFeeInEth();
-      console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+      let feeWei;
+      try {
+        // Try to use existing contract first
+        feeWei = await contract.getGmFeeInEth();
+        console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+      } catch (feeError) {
+        console.warn('[TRANSACTION] Fee fetch failed with wallet provider, using public RPC...', feeError.message);
+        // Fallback to public RPC for read-only call
+        const networkConfig = NETWORKS.find(n => n.chainId === chainId);
+        if (networkConfig) {
+          const publicProvider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+          const publicContract = new ethers.Contract(networkConfig.contractAddress, GM_ABI, publicProvider);
+          feeWei = await publicContract.getGmFeeInEth();
+          console.log('[TRANSACTION] GM fee (from public RPC):', ethers.formatEther(feeWei), 'ETH');
+        } else {
+          throw new Error('Network configuration not found');
+        }
+      }
       
       // Get current nonce BEFORE sending transaction
       const address = await s.getAddress();
