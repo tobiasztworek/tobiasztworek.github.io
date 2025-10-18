@@ -845,6 +845,12 @@ function startAutoProviderMonitor() {
   
   const checkInterval = setInterval(async () => {
     try {
+      // Don't monitor during transaction
+      if (isTransactionInProgress) {
+        console.log('[auto-monitor] Transaction in progress - skipping check');
+        return;
+      }
+      
       // Only monitor if we don't have an active provider but modal exists
       if (activeEip1193Provider || !modal) return;
       
@@ -921,6 +927,11 @@ function startAutoProviderMonitor() {
 function startConnectionStateSynchronization() {
   setInterval(async () => {
     try {
+      // Don't sync during transaction
+      if (isTransactionInProgress) {
+        return;
+      }
+      
       if (!modal) return;
       
       const isConnected = modal.getIsConnectedState?.();
@@ -1048,6 +1059,12 @@ const EXTENDED_COOLDOWN_MS = 120000; // 2 minutes extended cooldown
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
 async function forceRefreshProvider(userInitiated = false) {
   console.log('🟠 [FUNCTION] forceRefreshProvider() STARTED');
+  
+  // Don't refresh provider during transaction
+  if (isTransactionInProgress && !userInitiated) {
+    console.log('[forceRefresh] Transaction in progress - skipping refresh');
+    return false;
+  }
   
   // Check if we're in extended cooldown period due to repeated broken sessions
   if (brokenSessionCooldownActive && !userInitiated) {
