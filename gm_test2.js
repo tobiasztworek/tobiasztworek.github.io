@@ -376,13 +376,32 @@ function renderNetworkCard(net) {
         console.log('[TRANSACTION] Starting parallel nonce monitoring...');
         await new Promise(r => setTimeout(r, 5000)); // Wait 5s before starting to check
         
+        let consecutiveFailures = 0;
+        const maxConsecutiveFailures = 3;
+        
         for (let i = 0; i < 60; i++) { // Check for 2 minutes (60 * 2s)
-          const currentNonce = await provider.getTransactionCount(address, 'latest');
-          if (currentNonce > startNonce) {
-            console.log('✅ [TRANSACTION] Nonce increased! Transaction confirmed by nonce monitor');
-            txSent = true;
-            return { detected: true, nonce: currentNonce };
+          try {
+            const currentNonce = await provider.getTransactionCount(address, 'latest');
+            consecutiveFailures = 0; // Reset on success
+            
+            if (currentNonce > startNonce) {
+              console.log('✅ [TRANSACTION] Nonce increased! Transaction confirmed by nonce monitor');
+              txSent = true;
+              return { detected: true, nonce: currentNonce };
+            }
+          } catch (error) {
+            consecutiveFailures++;
+            console.warn(`[TRANSACTION] Nonce check failed (${consecutiveFailures}/${maxConsecutiveFailures}):`, error.message);
+            
+            // If too many consecutive failures, wait longer for DNS recovery
+            if (consecutiveFailures >= maxConsecutiveFailures) {
+              console.log('[TRANSACTION] Multiple failures - waiting 10s for network recovery...');
+              await new Promise(r => setTimeout(r, 10000));
+              consecutiveFailures = 0; // Reset after long wait
+              continue;
+            }
           }
+          
           await new Promise(r => setTimeout(r, 2000));
         }
         return { detected: false };
