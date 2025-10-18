@@ -495,29 +495,55 @@ function renderNetworkCard(net) {
           }
         };
         
-        // Poll every 2 seconds for up to 2 minutes
+        // Poll every 2 seconds for up to 2 minutes, but also race with nonce monitor
         let attempts = 0;
         const maxAttempts = 60; // 60 * 2s = 2 minutes
-        while (attempts < maxAttempts) {
-          const confirmed = await checkReceipt();
-          if (confirmed) break;
-          await new Promise(r => setTimeout(r, 2000));
-          attempts++;
-          // Update status to show we're still checking
-          if (attempts % 5 === 0) {
-            console.log('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
-            statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
-          }
-        }
         
-        // If timeout, show pending status
-        if (attempts >= maxAttempts) {
-          console.warn('⏱️ [TRANSACTION] Timeout waiting for confirmation after', attempts * 2, 'seconds');
-          statusText.textContent = 'Tx pending (check explorer)';
+        const receiptPolling = (async () => {
+          while (attempts < maxAttempts) {
+            // Check if nonce monitor already detected the transaction
+            if (txSent && (await nonceMonitor).detected) {
+              console.log('[TRANSACTION] Nonce monitor detected tx - stopping receipt polling');
+              statusText.textContent = 'GM completed successfully ☀️';
+              txStatus.textContent = 'Confirmed: ' + tx.hash;
+              return true;
+            }
+            
+            const confirmed = await checkReceipt();
+            if (confirmed) return true;
+            
+            await new Promise(r => setTimeout(r, 2000));
+            attempts++;
+            // Update status to show we're still checking
+            if (attempts % 5 === 0) {
+              console.log('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
+              statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
+            }
+          }
+          return false;
+        })();
+        
+        // Race between receipt polling and nonce monitor
+        const receiptFound = await Promise.race([
+          receiptPolling,
+          nonceMonitor.then(result => {
+            if (result.detected) {
+              console.log('[TRANSACTION] Nonce monitor won the race!');
+              statusText.textContent = 'GM completed successfully ☀️';
+              txStatus.textContent = 'Confirmed: ' + tx.hash;
+              return true;
+            }
+            return false;
+          })
+        ]);
+        
+        if (!receiptFound) {
+          console.warn('⏱️ [TRANSACTION] Timeout waiting for confirmation');
+          statusText.textContent = 'Check your wallet for transaction status';
           txStatus.textContent = 'Pending: ' + tx.hash;
         }
       }
-// ...existing code...
+
     } catch (e) {
       console.error('❌ [TRANSACTION] Error:', e);
       statusText.textContent = 'Error in transaction';
