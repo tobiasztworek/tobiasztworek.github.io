@@ -19,6 +19,7 @@ let signer = null;
 let networksRendered = false;
 let userInitiatedConnection = false; // Track if user manually triggered connection
 let isTransactionInProgress = false; // Block provider refresh during transactions
+let sessionTransactionCount = 0; // Track transactions in current session
 
 // UI elements (populated during init)
 let connectBtn, bannerContainer, networksRow;
@@ -271,28 +272,6 @@ function renderNetworkCard(net) {
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
       
-      // DNS PRE-WARMING: Force browser to resolve DNS before opening MetaMask
-      // This prevents ERR_NAME_NOT_RESOLVED after returning from MetaMask on mobile
-      console.log('[TRANSACTION] Pre-warming DNS connections...');
-      try {
-        // Force DNS lookup for WalletConnect relay (most critical)
-        await Promise.race([
-          fetch('https://relay.walletconnect.org/', { method: 'HEAD', mode: 'no-cors' }).catch(() => {}),
-          new Promise(r => setTimeout(r, 1000)) // Max 1s wait
-        ]);
-        
-        // Force DNS lookup for RPC endpoint
-        if (net?.rpcUrl) {
-          await Promise.race([
-            fetch(net.rpcUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {}),
-            new Promise(r => setTimeout(r, 1000)) // Max 1s wait
-          ]);
-        }
-        console.log('[TRANSACTION] DNS pre-warming completed');
-      } catch (dnsError) {
-        console.warn('[TRANSACTION] DNS pre-warming failed (non-critical):', dnsError);
-      }
-      
       console.log('[TRANSACTION] Switching to network:', net.name, net.chainId);
       const ok = await switchToNetwork(net);
       if (!ok) { 
@@ -324,31 +303,37 @@ function renderNetworkCard(net) {
       
       if (rawProvider) {
         // CRITICAL: Clear ALL cached data (pendingRequest, responses, etc.)
+        // For FIRST transaction: only clear pendingRequest (minimal interference)
+        // For SECOND+ transactions: aggressive clearing to prevent stale cache
+        const isFirstTransaction = sessionTransactionCount === 0;
+        
         if (rawProvider.signer?.client) {
-          console.log('[TRANSACTION] Clearing WalletConnect client cache...');
           const client = rawProvider.signer.client;
           
-          // Clear pending request
+          // Always clear pending request
           if (client.pendingRequest) {
             console.log('[TRANSACTION] - Clearing pendingRequest');
             delete client.pendingRequest;
           }
           
-          // Clear response cache if exists
-          if (client.response) {
-            console.log('[TRANSACTION] - Clearing response cache');
-            delete client.response;
-          }
-          
-          // Clear any cached results
-          if (client.result) {
-            console.log('[TRANSACTION] - Clearing result cache');
-            delete client.result;
+          // Clear response/result cache ONLY for 2nd+ transactions
+          if (!isFirstTransaction) {
+            console.log('[TRANSACTION] Aggressive cache clearing (2nd+ transaction)...');
+            if (client.response) {
+              console.log('[TRANSACTION] - Clearing response cache');
+              delete client.response;
+            }
+            if (client.result) {
+              console.log('[TRANSACTION] - Clearing result cache');
+              delete client.result;
+            }
+          } else {
+            console.log('[TRANSACTION] Minimal cache clearing (1st transaction)...');
           }
         }
         
-        // Also clear from rpcProviders if exists
-        if (rawProvider.rpcProviders) {
+        // Also clear from rpcProviders if exists (only for 2nd+ transactions)
+        if (!isFirstTransaction && rawProvider.rpcProviders) {
           console.log('[TRANSACTION] Clearing RPC provider caches...');
           Object.values(rawProvider.rpcProviders).forEach(rpc => {
             if (rpc?.pendingRequest) {
@@ -365,16 +350,6 @@ function renderNetworkCard(net) {
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
           console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
-          
-          // FORCE CACHE RESET: Send dummy request to reset MetaMask state
-          try {
-            console.log('[TRANSACTION] Forcing cache reset with eth_chainId request...');
-            await rawProvider.request({ method: 'eth_chainId' });
-            console.log('[TRANSACTION] Cache reset successful');
-            await new Promise(r => setTimeout(r, 500)); // Wait for cache to clear
-          } catch (resetError) {
-            console.warn('[TRANSACTION] Cache reset failed:', resetError);
-          }
           
           // Always try to ensure transport is open (helps with mobile WebSocket issues)
           try {
@@ -686,6 +661,10 @@ function renderNetworkCard(net) {
       statusText.textContent = 'Error in transaction';
     } finally {
       console.log('🔥 [TRANSACTION] Transaction flow completed, clearing flags');
+      
+      // Increment transaction counter for this session
+      sessionTransactionCount++;
+      console.log('[TRANSACTION] Session tx count:', sessionTransactionCount);
       
       // CRITICAL: Clear ALL WalletConnect cache after transaction completes
       const rawProvider = getActiveProvider();
@@ -1050,6 +1029,10 @@ function attachProviderEventListeners(p) {
 // User-initiated disconnect
 async function disconnect() {
   console.log('❌ [FUNCTION] disconnect() CALLED');
+  
+  // Reset transaction counter on disconnect
+  sessionTransactionCount = 0;
+  console.log('[disconnect] Reset session transaction counter');
   
   try {
     // Check if using injected provider
