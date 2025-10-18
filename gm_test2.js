@@ -517,9 +517,15 @@ async function connect() {
       if (probeCount2 > 100) clearInterval(pid2);
     }, 400);
   } catch (e) {}
+  // Final check: if still no provider after modal flow, wait briefly for injected
   if (!getActiveProvider()) {
-    const injectedFound = await waitForInjectedProvider(5000);
-    if (!injectedFound) { showBanner('No injected wallet detected. Open AppKit modal to connect or install MetaMask.', 'warning', [ { label: 'Open modal', onClick: () => { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } } ]); return; }
+    const injectedFound = await waitForInjectedProvider(3000);
+    if (!injectedFound) { 
+      // Don't show banner - modal is already open and user is connecting
+      // Just wait for WalletConnect to complete
+      console.log('[connect] No injected provider found, waiting for modal/WalletConnect...');
+      return; 
+    }
     try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { console.warn('eth_requestAccounts failed', e); }
   }
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
