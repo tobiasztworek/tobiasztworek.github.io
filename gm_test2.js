@@ -353,9 +353,48 @@ function renderNetworkCard(net) {
       const feeWei = await contract.getGmFeeInEth();
       const tx = await contract.sayGM({ value: feeWei });
       txStatus.textContent = 'Tx sent: ' + tx.hash;
-      await tx.wait();
-      statusText.textContent = 'GM completed successfully ☀️';
-      txStatus.textContent = 'Confirmed: ' + tx.hash;
+      statusText.textContent = 'Waiting for confirmation...';
+      
+      // Poll for transaction receipt using provider directly (no wallet interaction needed)
+      const checkReceipt = async () => {
+        try {
+          const receipt = await provider.getTransactionReceipt(tx.hash);
+          if (receipt) {
+            if (receipt.status === 1) {
+              statusText.textContent = 'GM completed successfully ☀️';
+              txStatus.textContent = 'Confirmed: ' + tx.hash;
+            } else {
+              statusText.textContent = 'Transaction failed ❌';
+              txStatus.textContent = 'Failed: ' + tx.hash;
+            }
+            return true;
+          }
+          return false;
+        } catch (e) {
+          console.debug('Receipt check error:', e);
+          return false;
+        }
+      };
+      
+      // Poll every 2 seconds for up to 2 minutes
+      let attempts = 0;
+      const maxAttempts = 60; // 60 * 2s = 2 minutes
+      while (attempts < maxAttempts) {
+        const confirmed = await checkReceipt();
+        if (confirmed) break;
+        await new Promise(r => setTimeout(r, 2000));
+        attempts++;
+        // Update status to show we're still checking
+        if (attempts % 5 === 0) {
+          statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
+        }
+      }
+      
+      // If timeout, show pending status
+      if (attempts >= maxAttempts) {
+        statusText.textContent = 'Tx pending (check explorer)';
+        txStatus.textContent = 'Pending: ' + tx.hash;
+      }
 // ...existing code...
     } catch (e) {
       console.error(e);
