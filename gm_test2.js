@@ -301,10 +301,21 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
       
       if (rawProvider) {
-        // For WalletConnect providers, clear any pending requests (fixes cache issue on mobile)
+        // CRITICAL: Clear pending requests FIRST (before any network calls)
         if (rawProvider.signer?.client?.pendingRequest) {
-          console.log('[TRANSACTION] Clearing pending requests from previous transaction...');
+          console.log('[TRANSACTION] Clearing pending request from previous transaction...');
           delete rawProvider.signer.client.pendingRequest;
+        }
+        
+        // Also clear from rpcProviders if exists
+        if (rawProvider.rpcProviders) {
+          console.log('[TRANSACTION] Clearing RPC provider caches...');
+          Object.values(rawProvider.rpcProviders).forEach(rpc => {
+            if (rpc?.pendingRequest) {
+              console.log('[TRANSACTION] Clearing pending request from RPC provider');
+              delete rpc.pendingRequest;
+            }
+          });
         }
         
         // For WalletConnect providers, try to refresh the session
@@ -376,11 +387,18 @@ function renderNetworkCard(net) {
       let feeWei;
       
       // Always use public RPC first - it's faster and more reliable (especially for consecutive txs)
-      // Use net.chainId from the network card we're in
+      // IMPORTANT: Provide chainId explicitly to avoid network detection issues
       if (net) {
         try {
           console.log('[TRANSACTION] Using public RPC for fee fetch...');
-          const publicProvider = new ethers.JsonRpcProvider(net.rpcUrl);
+          // Create provider with explicit network config (no auto-detect)
+          const network = {
+            chainId: parseInt(net.chainId),
+            name: net.name
+          };
+          const publicProvider = new ethers.JsonRpcProvider(net.rpcUrl, network, {
+            staticNetwork: true  // Don't auto-detect network
+          });
           const publicContract = new ethers.Contract(net.contractAddress, GM_ABI, publicProvider);
           feeWei = await publicContract.getGmFeeInEth();
           console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
