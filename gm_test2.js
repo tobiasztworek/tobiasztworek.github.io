@@ -374,22 +374,28 @@ function renderNetworkCard(net) {
       // Fetch GM fee using public RPC (read-only, no wallet interaction needed)
       console.log('[TRANSACTION] Fetching GM fee...');
       let feeWei;
-      try {
-        // Try to use existing contract first
-        feeWei = await contract.getGmFeeInEth();
-        console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
-      } catch (feeError) {
-        console.warn('[TRANSACTION] Fee fetch failed with wallet provider, using public RPC...', feeError.message);
-        // Fallback to public RPC for read-only call
-        const networkConfig = NETWORKS.find(n => n.chainId === chainId);
-        if (networkConfig) {
+      
+      // Always use public RPC first - it's faster and more reliable (especially for consecutive txs)
+      const networkConfig = NETWORKS.find(n => n.chainId === chainId);
+      if (networkConfig) {
+        try {
+          console.log('[TRANSACTION] Using public RPC for fee fetch...');
           const publicProvider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
           const publicContract = new ethers.Contract(networkConfig.contractAddress, GM_ABI, publicProvider);
           feeWei = await publicContract.getGmFeeInEth();
-          console.log('[TRANSACTION] GM fee (from public RPC):', ethers.formatEther(feeWei), 'ETH');
-        } else {
-          throw new Error('Network configuration not found');
+          console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+        } catch (publicError) {
+          console.warn('[TRANSACTION] Public RPC fee fetch failed, trying wallet provider...', publicError.message);
+          // Fallback to wallet provider with timeout
+          const feePromise = contract.getGmFeeInEth();
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Fee fetch timeout')), 5000)
+          );
+          feeWei = await Promise.race([feePromise, timeoutPromise]);
+          console.log('[TRANSACTION] GM fee (from wallet):', ethers.formatEther(feeWei), 'ETH');
         }
+      } else {
+        throw new Error('Network configuration not found');
       }
       
       // Get current nonce BEFORE sending transaction
