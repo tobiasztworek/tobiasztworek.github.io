@@ -376,12 +376,12 @@ function renderNetworkCard(net) {
       let feeWei;
       
       // Always use public RPC first - it's faster and more reliable (especially for consecutive txs)
-      const networkConfig = NETWORKS.find(n => n.chainId === chainId);
-      if (networkConfig) {
+      // Use net.chainId from the network card we're in
+      if (net) {
         try {
           console.log('[TRANSACTION] Using public RPC for fee fetch...');
-          const publicProvider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
-          const publicContract = new ethers.Contract(networkConfig.contractAddress, GM_ABI, publicProvider);
+          const publicProvider = new ethers.JsonRpcProvider(net.rpcUrl);
+          const publicContract = new ethers.Contract(net.contractAddress, GM_ABI, publicProvider);
           feeWei = await publicContract.getGmFeeInEth();
           console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
         } catch (publicError) {
