@@ -304,19 +304,38 @@ function renderNetworkCard(net) {
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
           console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
+          
+          // Check WebSocket connection state
+          const client = rawProvider.client;
+          const isConnected = client?.core?.relayer?.connected;
+          console.log('[TRANSACTION] WebSocket connected:', isConnected);
+          
+          // If disconnected, try to reconnect
+          if (isConnected === false) {
+            console.warn('[TRANSACTION] WebSocket disconnected, attempting to reconnect...');
+            try {
+              await client.core.relayer.transportOpen();
+              console.log('[TRANSACTION] WebSocket reconnected');
+              // Wait a bit for connection to stabilize
+              await new Promise(r => setTimeout(r, 1000));
+            } catch (wsError) {
+              console.error('[TRANSACTION] WebSocket reconnect failed:', wsError);
+            }
+          }
+          
           try {
             // Ping the session to ensure it's alive
             const chainId = await rawProvider.request({ method: 'eth_chainId' });
             console.log('[TRANSACTION] Session ping successful, chainId:', chainId);
           } catch (pingError) {
-            console.warn('[TRANSACTION] Session ping failed, attempting reconnect:', pingError);
-            // Try to reconnect
+            console.warn('[TRANSACTION] Session ping failed, attempting full reconnect:', pingError);
+            // Try to reconnect the entire provider
             if (typeof rawProvider.connect === 'function') {
               try {
                 await rawProvider.connect();
-                console.log('[TRANSACTION] Session reconnected');
+                console.log('[TRANSACTION] Provider reconnected');
               } catch (reconnectError) {
-                console.error('[TRANSACTION] Reconnect failed:', reconnectError);
+                console.error('[TRANSACTION] Provider reconnect failed:', reconnectError);
               }
             }
           }
