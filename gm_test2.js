@@ -229,43 +229,23 @@ function renderNetworkCard(net) {
     </h2>
     <div class="mb-3">
       <div><strong>Status:</strong> <span class="statusText">—</span></div>
-      <div><strong>GM Fee:</strong> <span class="feeEth">—</span> ETH</div>
 // ...existing code...
     </div>
-    <div class="d-flex gap-2 mb-2">
-      <button class="fetchFeeBtn btn btn-secondary flex-fill">Calculate fee</button>
-      <button class="sayGmBtn btn btn-secondary flex-fill">Say GM ☀️</button>
+    <div class="d-grid mb-2">
+      <button class="sayGmBtn btn btn-secondary">Say GM ☀️</button>
     </div>
     <small class="text-muted d-block mb-2">💡 Mobile: App returns automatically after signing - please wait ~10-15s for blockchain confirmation</small>
     <div class="txStatus">—</div>
   `;
   col.appendChild(container); networksRow.appendChild(col);
-  const fetchFeeBtn = container.querySelector('.fetchFeeBtn');
   const sayGmBtn = container.querySelector('.sayGmBtn');
   const statusText = container.querySelector('.statusText');
-  const feeEthText = container.querySelector('.feeEth');
 // ...existing code...
   const txStatus = container.querySelector('.txStatus');
   const addBtn = container.querySelector('.addBtn');
-  fetchFeeBtn.style.backgroundColor = net.buttonColor; sayGmBtn.style.backgroundColor = net.buttonColor;
+  sayGmBtn.style.backgroundColor = net.buttonColor;
   addBtn.addEventListener('click', async () => { try { await addNetworkById(parseInt(net.chainId, 16)); } catch (e) { console.error(e); showBanner('Error adding network', 'danger'); } });
-  fetchFeeBtn.addEventListener('click', async () => {
-    try {
-      statusText.textContent = 'Fee calculation...';
-      const ok = await switchToNetwork(net);
-      if (!ok) { statusText.textContent = 'No provider'; return; }
-      const provider = getEthersProvider();
-      if (!provider) { statusText.textContent = 'No provider'; return; }
-      const s = await provider.getSigner();
-      const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
-      const feeWei = await contract.getGmFeeInEth();
-      feeEthText.textContent = Number(ethers.formatEther(feeWei)).toFixed(8);
-      statusText.textContent = 'Fee calculated ✅';
-    } catch (e) {
-      console.error(e);
-      statusText.textContent = 'Error in fee calculation';
-    }
-  });
+  
   sayGmBtn.addEventListener('click', async () => {
     try {
       console.log('🔥 [TRANSACTION] Starting GM transaction for', net.name);
@@ -442,22 +422,26 @@ function renderNetworkCard(net) {
         }
       }
       
-      // Fetch GM fee using public RPC (read-only, no wallet interaction needed)
+      // Fetch GM fee - quick timeout, non-blocking
       console.log('[TRANSACTION] Fetching GM fee...');
+      statusText.textContent = 'Fetching fee...';
       let feeWei;
       
-      // Use wallet provider for fee (public RPC has issues with network detection)
       try {
-        console.log('[TRANSACTION] Fetching fee from wallet provider...');
         const feePromise = contract.getGmFeeInEth();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Fee fetch timeout')), 10000)
+          setTimeout(() => reject(new Error('Fee fetch timeout')), 8000) // 8s quick timeout
         );
+        
         feeWei = await Promise.race([feePromise, timeoutPromise]);
         console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+        statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ETH`;
+        
       } catch (feeError) {
-        console.error('[TRANSACTION] Fee fetch failed:', feeError);
-        throw new Error('Could not fetch GM fee: ' + feeError.message);
+        console.warn('[TRANSACTION] Fee fetch timeout, proceeding anyway:', feeError.message);
+        // Don't block - MetaMask will show correct fee anyway
+        statusText.textContent = 'Fee check skipped (network slow)';
+        feeWei = 0n; // MetaMask will calculate correct fee
       }
       
       // Get current nonce BEFORE sending transaction
