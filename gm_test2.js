@@ -360,13 +360,36 @@ function renderNetworkCard(net) {
       const feeWei = await contract.getGmFeeInEth();
       console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
       
+      // Get current nonce BEFORE sending transaction
+      const address = await s.getAddress();
+      const startNonce = await provider.getTransactionCount(address, 'latest');
+      console.log('[TRANSACTION] Current nonce before tx:', startNonce);
+      
       console.log('[TRANSACTION] Sending GM transaction...');
       statusText.textContent = 'Sign in wallet, then return and wait...';
       
       let tx;
+      let txSent = false;
+      
+      // Start nonce monitoring in parallel (for MetaMask Mobile quick return bug)
+      const nonceMonitor = (async () => {
+        console.log('[TRANSACTION] Starting parallel nonce monitoring...');
+        await new Promise(r => setTimeout(r, 5000)); // Wait 5s before starting to check
+        
+        for (let i = 0; i < 60; i++) { // Check for 2 minutes (60 * 2s)
+          const currentNonce = await provider.getTransactionCount(address, 'latest');
+          if (currentNonce > startNonce) {
+            console.log('✅ [TRANSACTION] Nonce increased! Transaction confirmed by nonce monitor');
+            txSent = true;
+            return { detected: true, nonce: currentNonce };
+          }
+          await new Promise(r => setTimeout(r, 2000));
+        }
+        return { detected: false };
+      })();
+      
       try {
-        // Add timeout wrapper for mobile wallet issues
-        // Longer timeout for mobile DNS issues (Android often needs 30-60s after app switch)
+        // Try to get tx response (often fails on MetaMask Mobile)
         const txPromise = contract.sayGM({ value: feeWei });
         
         // Show waiting feedback every 10 seconds
@@ -387,6 +410,7 @@ function renderNetworkCard(net) {
         tx = await Promise.race([txPromise, timeoutPromise]);
         clearInterval(waitInterval);
         console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
+        txSent = true;
       } catch (txError) {
         console.error('[TRANSACTION] Error sending transaction:', txError);
         
@@ -399,136 +423,80 @@ function renderNetworkCard(net) {
         
         // Check if timeout - try to get pending transaction from provider
         if (txError.message === 'TIMEOUT') {
-          console.warn('[TRANSACTION] Timeout waiting for tx response - checking for pending tx...');
-          statusText.textContent = 'Checking transaction status...';
+          console.warn('[TRANSACTION] Timeout waiting for tx response - checking nonce monitor...');
           
-          // Try to get recent transactions from signer
-          try {
-            const s = await provider.getSigner();
-            const address = await s.getAddress();
-            
-            // Get nonces - we need to check BEFORE transaction was sent
-            const latestNonce = await provider.getTransactionCount(address, 'latest');
-            const pendingNonce = await provider.getTransactionCount(address, 'pending');
-            
-            console.log('[TRANSACTION] Address:', address, 'Latest nonce:', latestNonce, 'Pending nonce:', pendingNonce);
-            
-            // If pending >= latest, there might be a pending transaction
-            // OR the transaction might have already been confirmed
-            if (pendingNonce >= latestNonce) {
-              // Check if transaction was already confirmed (latest moved forward)
-              // We don't know the exact starting nonce, so assume the tx might be recent
-              console.log('[TRANSACTION] Checking for recent transaction activity...');
-              statusText.textContent = 'Checking for transaction...';
-              
-              // Wait a bit and check again
-              await new Promise(r => setTimeout(r, 3000));
-              const newLatestNonce = await provider.getTransactionCount(address, 'latest');
-              
-              if (newLatestNonce > latestNonce) {
-                console.log('✅ [TRANSACTION] Transaction confirmed (nonce increased from', latestNonce, 'to', newLatestNonce, ')');
-                statusText.textContent = 'GM completed successfully ☀️';
-                txStatus.textContent = 'Confirmed (check wallet)';
-                return;
-              }
-              
-              // If still no change, monitor for a while
-              if (pendingNonce > latestNonce) {
-                console.log('[TRANSACTION] Pending transaction detected! Monitoring...');
-                statusText.textContent = 'Transaction pending, waiting for confirmation...';
-                
-                const startNonce = latestNonce;
-                let confirmed = false;
-                let attempts = 0;
-                const maxAttempts = 60;
-                
-                while (attempts < maxAttempts && !confirmed) {
-                  await new Promise(r => setTimeout(r, 2000));
-                  attempts++;
-                  
-                  const currentNonce = await provider.getTransactionCount(address, 'latest');
-                  if (currentNonce > startNonce) {
-                    console.log('✅ [TRANSACTION] Transaction confirmed (nonce changed)');
-                    statusText.textContent = 'GM completed successfully ☀️';
-                    txStatus.textContent = 'Confirmed (check wallet)';
-                    confirmed = true;
-                    break;
-                  }
-                  
-                  if (attempts % 5 === 0) {
-                    console.log('[TRANSACTION] Still waiting... (', attempts * 2, 's)');
-                    statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
-                  }
-                }
-                
-                if (!confirmed) {
-                  statusText.textContent = 'Tx pending (check wallet)';
-                  txStatus.textContent = 'Pending (check wallet history)';
-                }
-                
-                return;
-              }
-            }
-          } catch (nonceError) {
-            console.error('[TRANSACTION] Error checking nonce:', nonceError);
+          // Wait for nonce monitor to complete
+          const monitorResult = await nonceMonitor;
+          
+          if (monitorResult.detected) {
+            console.log('✅ [TRANSACTION] Transaction confirmed by nonce monitor!');
+            statusText.textContent = 'GM completed successfully ☀️';
+            txStatus.textContent = 'Confirmed (check wallet for tx hash)';
+            return;
           }
           
-          statusText.textContent = 'Transaction status unclear (check wallet)';
-          txStatus.textContent = 'Check your wallet history';
+          // Nonce didn't change - transaction likely failed or wasn't sent
+          console.warn('[TRANSACTION] Nonce monitor did not detect transaction');
+          console.warn('[TRANSACTION] Transaction may have failed or not been sent');
+          statusText.textContent = 'Transaction not detected - check your wallet';
+          txStatus.textContent = 'Please check MetaMask history';
           return;
         }
         
         throw txError; // Re-throw other errors
       }
       
-      txStatus.textContent = 'Tx sent: ' + tx.hash;
-      statusText.textContent = 'Waiting for confirmation...';
-      
-      console.log('[TRANSACTION] Starting receipt polling...');
-      // Poll for transaction receipt using provider directly (no wallet interaction needed)
-      const checkReceipt = async () => {
-        try {
-          const receipt = await provider.getTransactionReceipt(tx.hash);
-          if (receipt) {
-            console.log('[TRANSACTION] Receipt received! Status:', receipt.status);
-            if (receipt.status === 1) {
-              console.log('✅ [TRANSACTION] GM completed successfully!');
-              statusText.textContent = 'GM completed successfully ☀️';
-              txStatus.textContent = 'Confirmed: ' + tx.hash;
-            } else {
-              console.error('❌ [TRANSACTION] Transaction failed');
-              statusText.textContent = 'Transaction failed ❌';
-              txStatus.textContent = 'Failed: ' + tx.hash;
+      // If we got tx hash successfully, continue with receipt polling
+      if (tx && tx.hash) {
+        txStatus.textContent = 'Tx sent: ' + tx.hash;
+        statusText.textContent = 'Waiting for confirmation...';
+        
+        console.log('[TRANSACTION] Starting receipt polling...');
+        // Poll for transaction receipt using provider directly (no wallet interaction needed)
+        const checkReceipt = async () => {
+          try {
+            const receipt = await provider.getTransactionReceipt(tx.hash);
+            if (receipt) {
+              console.log('[TRANSACTION] Receipt received! Status:', receipt.status);
+              if (receipt.status === 1) {
+                console.log('✅ [TRANSACTION] GM completed successfully!');
+                statusText.textContent = 'GM completed successfully ☀️';
+                txStatus.textContent = 'Confirmed: ' + tx.hash;
+              } else {
+                console.error('❌ [TRANSACTION] Transaction failed');
+                statusText.textContent = 'Transaction failed ❌';
+                txStatus.textContent = 'Failed: ' + tx.hash;
+              }
+              return true;
             }
-            return true;
+            return false;
+          } catch (e) {
+            console.debug('[TRANSACTION] Receipt check error:', e);
+            return false;
           }
-          return false;
-        } catch (e) {
-          console.debug('[TRANSACTION] Receipt check error:', e);
-          return false;
+        };
+        
+        // Poll every 2 seconds for up to 2 minutes
+        let attempts = 0;
+        const maxAttempts = 60; // 60 * 2s = 2 minutes
+        while (attempts < maxAttempts) {
+          const confirmed = await checkReceipt();
+          if (confirmed) break;
+          await new Promise(r => setTimeout(r, 2000));
+          attempts++;
+          // Update status to show we're still checking
+          if (attempts % 5 === 0) {
+            console.log('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
+            statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
+          }
         }
-      };
-      
-      // Poll every 2 seconds for up to 2 minutes
-      let attempts = 0;
-      const maxAttempts = 60; // 60 * 2s = 2 minutes
-      while (attempts < maxAttempts) {
-        const confirmed = await checkReceipt();
-        if (confirmed) break;
-        await new Promise(r => setTimeout(r, 2000));
-        attempts++;
-        // Update status to show we're still checking
-        if (attempts % 5 === 0) {
-          console.log('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
-          statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
+        
+        // If timeout, show pending status
+        if (attempts >= maxAttempts) {
+          console.warn('⏱️ [TRANSACTION] Timeout waiting for confirmation after', attempts * 2, 'seconds');
+          statusText.textContent = 'Tx pending (check explorer)';
+          txStatus.textContent = 'Pending: ' + tx.hash;
         }
-      }
-      
-      // If timeout, show pending status
-      if (attempts >= maxAttempts) {
-        console.warn('⏱️ [TRANSACTION] Timeout waiting for confirmation after', attempts * 2, 'seconds');
-        statusText.textContent = 'Tx pending (check explorer)';
-        txStatus.textContent = 'Pending: ' + tx.hash;
       }
 // ...existing code...
     } catch (e) {
