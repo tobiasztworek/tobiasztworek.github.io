@@ -294,6 +294,29 @@ function renderNetworkCard(net) {
       const s = await provider.getSigner();
       const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
       
+      // Refresh WalletConnect session before transaction (important for mobile)
+      console.log('[TRANSACTION] Checking provider connection state...');
+      const rawProvider = getActiveProvider();
+      if (rawProvider && rawProvider.session) {
+        console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
+        try {
+          // Ping the session to ensure it's alive
+          await rawProvider.request({ method: 'eth_chainId' });
+          console.log('[TRANSACTION] Session ping successful');
+        } catch (pingError) {
+          console.warn('[TRANSACTION] Session ping failed, attempting reconnect:', pingError);
+          // Try to reconnect
+          if (typeof rawProvider.connect === 'function') {
+            try {
+              await rawProvider.connect();
+              console.log('[TRANSACTION] Session reconnected');
+            } catch (reconnectError) {
+              console.error('[TRANSACTION] Reconnect failed:', reconnectError);
+            }
+          }
+        }
+      }
+      
       console.log('[TRANSACTION] Fetching GM fee...');
       const feeWei = await contract.getGmFeeInEth();
       console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
@@ -306,7 +329,7 @@ function renderNetworkCard(net) {
         // Add timeout wrapper for mobile wallet issues
         const txPromise = contract.sayGM({ value: feeWei });
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('TIMEOUT')), 30000) // 30 second timeout
+          setTimeout(() => reject(new Error('TIMEOUT')), 60000) // 60 second timeout
         );
         
         tx = await Promise.race([txPromise, timeoutPromise]);
