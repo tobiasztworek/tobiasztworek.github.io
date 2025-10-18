@@ -426,8 +426,32 @@ function renderNetworkCard(net) {
           }, 120000) // 120 second (2 minute) timeout
         );
         
-        tx = await Promise.race([txPromise, timeoutPromise]);
+        // Race between tx promise, timeout, and nonce monitor
+        const nonceDetectionPromise = nonceMonitor.then(result => {
+          if (result.detected) {
+            console.log('[TRANSACTION] Nonce monitor detected tx during send - considering it successful');
+            clearInterval(waitInterval);
+            // Return a fake tx object with hash that we'll try to find
+            return { 
+              hash: 'DETECTED_BY_NONCE',
+              detected: true 
+            };
+          }
+          throw new Error('NONCE_MONITOR_TIMEOUT');
+        });
+        
+        tx = await Promise.race([txPromise, timeoutPromise, nonceDetectionPromise]);
         clearInterval(waitInterval);
+        
+        if (tx.detected) {
+          // Transaction was detected by nonce monitor
+          console.log('[TRANSACTION] Transaction detected by nonce monitor!');
+          txSent = true;
+          statusText.textContent = 'GM completed successfully ☀️';
+          txStatus.textContent = 'Confirmed (detected by nonce change)';
+          return;
+        }
+        
         console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
         txSent = true;
       } catch (txError) {
