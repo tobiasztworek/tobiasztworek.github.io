@@ -18,6 +18,7 @@ let activeEip1193Provider = null; // chosen provider
 let signer = null;
 let networksRendered = false;
 let userInitiatedConnection = false; // Track if user manually triggered connection
+let isTransactionInProgress = false; // Block provider refresh during transactions
 
 // UI elements (populated during init)
 let connectBtn, bannerContainer, networksRow;
@@ -108,6 +109,12 @@ export function initAppKit() {
             console.log('[modal-state] Connection check - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected, 'activeProvider:', !!activeEip1193Provider);
             
             if (modalConnected && !activeEip1193Provider && !forceRefreshInProgress) {
+              // Don't refresh provider during transaction
+              if (isTransactionInProgress) {
+                console.log('[modal-state] Transaction in progress - skipping auto-refresh');
+                return;
+              }
+              
               // Check if user has manually disconnected - respect their choice
               const connectionStatus = localStorage.getItem('@appkit/connection_status');
               if (connectionStatus === 'disconnected') {
@@ -342,12 +349,13 @@ function renderNetworkCard(net) {
   });
   sayGmBtn.addEventListener('click', async () => {
     try {
+      isTransactionInProgress = true; // Block provider refresh during tx
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
       const ok = await switchToNetwork(net);
-      if (!ok) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; return; }
+      if (!ok) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; isTransactionInProgress = false; return; }
       const provider = getEthersProvider();
-      if (!provider) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; return; }
+      if (!provider) { statusText.textContent = 'No provider'; sayGmBtn.disabled = false; isTransactionInProgress = false; return; }
       const s = await provider.getSigner();
       const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
       const feeWei = await contract.getGmFeeInEth();
@@ -400,6 +408,7 @@ function renderNetworkCard(net) {
       console.error(e);
       statusText.textContent = 'Error in transaction';
     } finally {
+      isTransactionInProgress = false; // Always clear flag
       sayGmBtn.disabled = false;
     }
   });
