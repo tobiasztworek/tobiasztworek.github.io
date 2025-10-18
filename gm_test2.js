@@ -250,16 +250,6 @@ function renderNetworkCard(net) {
     try {
       console.log('🔥 [TRANSACTION] Starting GM transaction for', net.name);
       
-      // CRITICAL: Restore window focus IMMEDIATELY before ANY operations
-      // This prevents "Document does not have focus, skipping deeplink" errors
-      try {
-        window.focus();
-        document.body.focus();
-        console.log('[TRANSACTION] Window focus restored at start');
-      } catch (focusError) {
-        console.warn('[TRANSACTION] Could not restore focus:', focusError);
-      }
-      
       isTransactionInProgress = true; // Block provider refresh during tx
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
@@ -430,7 +420,7 @@ function renderNetworkCard(net) {
       try {
         const feePromise = contract.getGmFeeInEth();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Fee fetch timeout')), 8000) // 8s quick timeout
+          setTimeout(() => reject(new Error('Fee fetch timeout')), 15000) // 15s timeout (increased)
         );
         
         feeWei = await Promise.race([feePromise, timeoutPromise]);
@@ -438,10 +428,10 @@ function renderNetworkCard(net) {
         statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ETH`;
         
       } catch (feeError) {
-        console.warn('[TRANSACTION] Fee fetch timeout, proceeding anyway:', feeError.message);
-        // Don't block - MetaMask will show correct fee anyway
-        statusText.textContent = 'Fee check skipped (network slow)';
-        feeWei = 0n; // MetaMask will calculate correct fee
+        console.error('[TRANSACTION] Fee fetch failed:', feeError.message);
+        statusText.textContent = 'Error: Could not fetch fee';
+        // CRITICAL: Cannot proceed without fee - contract will reject
+        throw new Error('Cannot fetch GM fee. Please check network connection and try again.');
       }
       
       // Get current nonce BEFORE sending transaction
