@@ -498,19 +498,21 @@ function renderNetworkCard(net) {
         // Poll every 2 seconds for up to 2 minutes, but also race with nonce monitor
         let attempts = 0;
         const maxAttempts = 60; // 60 * 2s = 2 minutes
+        let pollingActive = true;
         
         const receiptPolling = (async () => {
-          while (attempts < maxAttempts) {
-            // Check if nonce monitor already detected the transaction
-            if (txSent && (await nonceMonitor).detected) {
-              console.log('[TRANSACTION] Nonce monitor detected tx - stopping receipt polling');
-              statusText.textContent = 'GM completed successfully ☀️';
-              txStatus.textContent = 'Confirmed: ' + tx.hash;
+          while (attempts < maxAttempts && pollingActive) {
+            // Check if transaction was confirmed
+            if (txSent) {
+              console.log('[TRANSACTION] Transaction confirmed by other method - stopping receipt polling');
               return true;
             }
             
             const confirmed = await checkReceipt();
-            if (confirmed) return true;
+            if (confirmed) {
+              pollingActive = false;
+              return true;
+            }
             
             await new Promise(r => setTimeout(r, 2000));
             attempts++;
@@ -528,6 +530,7 @@ function renderNetworkCard(net) {
           receiptPolling,
           nonceMonitor.then(result => {
             if (result.detected) {
+              pollingActive = false; // Stop receipt polling
               console.log('[TRANSACTION] Nonce monitor won the race!');
               statusText.textContent = 'GM completed successfully ☀️';
               txStatus.textContent = 'Confirmed: ' + tx.hash;
