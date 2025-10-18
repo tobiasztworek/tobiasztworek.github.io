@@ -297,23 +297,31 @@ function renderNetworkCard(net) {
       // Refresh WalletConnect session before transaction (important for mobile)
       console.log('[TRANSACTION] Checking provider connection state...');
       const rawProvider = getActiveProvider();
-      if (rawProvider && rawProvider.session) {
-        console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
-        try {
-          // Ping the session to ensure it's alive
-          await rawProvider.request({ method: 'eth_chainId' });
-          console.log('[TRANSACTION] Session ping successful');
-        } catch (pingError) {
-          console.warn('[TRANSACTION] Session ping failed, attempting reconnect:', pingError);
-          // Try to reconnect
-          if (typeof rawProvider.connect === 'function') {
-            try {
-              await rawProvider.connect();
-              console.log('[TRANSACTION] Session reconnected');
-            } catch (reconnectError) {
-              console.error('[TRANSACTION] Reconnect failed:', reconnectError);
+      console.log('[TRANSACTION] Raw provider:', rawProvider);
+      console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
+      
+      if (rawProvider) {
+        // For WalletConnect providers, try to refresh the session
+        if (rawProvider.session || rawProvider.client) {
+          console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
+          try {
+            // Ping the session to ensure it's alive
+            const chainId = await rawProvider.request({ method: 'eth_chainId' });
+            console.log('[TRANSACTION] Session ping successful, chainId:', chainId);
+          } catch (pingError) {
+            console.warn('[TRANSACTION] Session ping failed, attempting reconnect:', pingError);
+            // Try to reconnect
+            if (typeof rawProvider.connect === 'function') {
+              try {
+                await rawProvider.connect();
+                console.log('[TRANSACTION] Session reconnected');
+              } catch (reconnectError) {
+                console.error('[TRANSACTION] Reconnect failed:', reconnectError);
+              }
             }
           }
+        } else {
+          console.log('[TRANSACTION] Not a WalletConnect provider or no session - skipping refresh');
         }
       }
       
@@ -353,46 +361,68 @@ function renderNetworkCard(net) {
           try {
             const s = await provider.getSigner();
             const address = await s.getAddress();
-            const nonce = await provider.getTransactionCount(address, 'pending');
+            
+            // Get nonces - we need to check BEFORE transaction was sent
             const latestNonce = await provider.getTransactionCount(address, 'latest');
+            const pendingNonce = await provider.getTransactionCount(address, 'pending');
             
-            console.log('[TRANSACTION] Address:', address, 'Latest nonce:', latestNonce, 'Pending nonce:', nonce);
+            console.log('[TRANSACTION] Address:', address, 'Latest nonce:', latestNonce, 'Pending nonce:', pendingNonce);
             
-            if (nonce > latestNonce) {
-              console.log('[TRANSACTION] Pending transaction detected! Monitoring mempool...');
-              statusText.textContent = 'Transaction detected, waiting for confirmation...';
+            // If pending >= latest, there might be a pending transaction
+            // OR the transaction might have already been confirmed
+            if (pendingNonce >= latestNonce) {
+              // Check if transaction was already confirmed (latest moved forward)
+              // We don't know the exact starting nonce, so assume the tx might be recent
+              console.log('[TRANSACTION] Checking for recent transaction activity...');
+              statusText.textContent = 'Checking for transaction...';
               
-              // Start monitoring without tx hash - just wait for nonce change
-              const startNonce = latestNonce;
-              let confirmed = false;
-              let attempts = 0;
-              const maxAttempts = 60;
+              // Wait a bit and check again
+              await new Promise(r => setTimeout(r, 3000));
+              const newLatestNonce = await provider.getTransactionCount(address, 'latest');
               
-              while (attempts < maxAttempts && !confirmed) {
-                await new Promise(r => setTimeout(r, 2000));
-                attempts++;
-                
-                const currentNonce = await provider.getTransactionCount(address, 'latest');
-                if (currentNonce > startNonce) {
-                  console.log('✅ [TRANSACTION] Transaction confirmed (nonce changed)');
-                  statusText.textContent = 'GM completed successfully ☀️';
-                  txStatus.textContent = 'Confirmed (check wallet)';
-                  confirmed = true;
-                  break;
-                }
-                
-                if (attempts % 5 === 0) {
-                  console.log('[TRANSACTION] Still waiting... (', attempts * 2, 's)');
-                  statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
-                }
+              if (newLatestNonce > latestNonce) {
+                console.log('✅ [TRANSACTION] Transaction confirmed (nonce increased from', latestNonce, 'to', newLatestNonce, ')');
+                statusText.textContent = 'GM completed successfully ☀️';
+                txStatus.textContent = 'Confirmed (check wallet)';
+                return;
               }
               
-              if (!confirmed) {
-                statusText.textContent = 'Tx pending (check wallet)';
-                txStatus.textContent = 'Pending (check wallet history)';
+              // If still no change, monitor for a while
+              if (pendingNonce > latestNonce) {
+                console.log('[TRANSACTION] Pending transaction detected! Monitoring...');
+                statusText.textContent = 'Transaction pending, waiting for confirmation...';
+                
+                const startNonce = latestNonce;
+                let confirmed = false;
+                let attempts = 0;
+                const maxAttempts = 60;
+                
+                while (attempts < maxAttempts && !confirmed) {
+                  await new Promise(r => setTimeout(r, 2000));
+                  attempts++;
+                  
+                  const currentNonce = await provider.getTransactionCount(address, 'latest');
+                  if (currentNonce > startNonce) {
+                    console.log('✅ [TRANSACTION] Transaction confirmed (nonce changed)');
+                    statusText.textContent = 'GM completed successfully ☀️';
+                    txStatus.textContent = 'Confirmed (check wallet)';
+                    confirmed = true;
+                    break;
+                  }
+                  
+                  if (attempts % 5 === 0) {
+                    console.log('[TRANSACTION] Still waiting... (', attempts * 2, 's)');
+                    statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
+                  }
+                }
+                
+                if (!confirmed) {
+                  statusText.textContent = 'Tx pending (check wallet)';
+                  txStatus.textContent = 'Pending (check wallet history)';
+                }
+                
+                return;
               }
-              
-              return; // Exit early
             }
           } catch (nonceError) {
             console.error('[TRANSACTION] Error checking nonce:', nonceError);
