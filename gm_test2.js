@@ -301,6 +301,12 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
       
       if (rawProvider) {
+        // For WalletConnect providers, clear any pending requests (fixes cache issue on mobile)
+        if (rawProvider.signer?.client?.pendingRequest) {
+          console.log('[TRANSACTION] Clearing pending requests from previous transaction...');
+          delete rawProvider.signer.client.pendingRequest;
+        }
+        
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
           console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
@@ -336,6 +342,15 @@ function renderNetworkCard(net) {
           try {
             // Ping the session to ensure it's alive
             console.log('[TRANSACTION] Pinging session...');
+            // Clear any cached responses before ping
+            if (rawProvider.rpcProviders) {
+              Object.values(rawProvider.rpcProviders).forEach(rpc => {
+                if (rpc?.pendingRequest) {
+                  console.log('[TRANSACTION] Clearing pending RPC request...');
+                  delete rpc.pendingRequest;
+                }
+              });
+            }
             const chainId = await rawProvider.request({ method: 'eth_chainId' });
             console.log('[TRANSACTION] Session ping successful, chainId:', chainId);
           } catch (pingError) {
