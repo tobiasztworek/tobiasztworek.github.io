@@ -416,34 +416,18 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Fetching GM fee...');
       let feeWei;
       
-      // Always use public RPC first - it's faster and more reliable (especially for consecutive txs)
-      // IMPORTANT: Provide chainId explicitly to avoid network detection issues
-      if (net) {
-        try {
-          console.log('[TRANSACTION] Using public RPC for fee fetch...');
-          // Create provider with explicit network config (no auto-detect)
-          const network = {
-            chainId: parseInt(net.chainId),
-            name: net.name
-          };
-          const publicProvider = new ethers.JsonRpcProvider(net.rpcUrl, network, {
-            staticNetwork: true  // Don't auto-detect network
-          });
-          const publicContract = new ethers.Contract(net.contractAddress, GM_ABI, publicProvider);
-          feeWei = await publicContract.getGmFeeInEth();
-          console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
-        } catch (publicError) {
-          console.warn('[TRANSACTION] Public RPC fee fetch failed, trying wallet provider...', publicError.message);
-          // Fallback to wallet provider with timeout
-          const feePromise = contract.getGmFeeInEth();
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Fee fetch timeout')), 5000)
-          );
-          feeWei = await Promise.race([feePromise, timeoutPromise]);
-          console.log('[TRANSACTION] GM fee (from wallet):', ethers.formatEther(feeWei), 'ETH');
-        }
-      } else {
-        throw new Error('Network configuration not found');
+      // Use wallet provider for fee (public RPC has issues with network detection)
+      try {
+        console.log('[TRANSACTION] Fetching fee from wallet provider...');
+        const feePromise = contract.getGmFeeInEth();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Fee fetch timeout')), 10000)
+        );
+        feeWei = await Promise.race([feePromise, timeoutPromise]);
+        console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+      } catch (feeError) {
+        console.error('[TRANSACTION] Fee fetch failed:', feeError);
+        throw new Error('Could not fetch GM fee: ' + feeError.message);
       }
       
       // Get current nonce BEFORE sending transaction
@@ -453,6 +437,15 @@ function renderNetworkCard(net) {
       
       console.log('[TRANSACTION] Sending GM transaction...');
       statusText.textContent = 'Opening MetaMask...';
+      
+      // CRITICAL: Ensure document has focus before opening deeplink
+      // This prevents "Document does not have focus, skipping deeplink" error
+      try {
+        window.focus();
+        console.log('[TRANSACTION] Window focus restored');
+      } catch (focusError) {
+        console.warn('[TRANSACTION] Could not restore focus:', focusError);
+      }
       
       let tx;
       let txSent = false;
@@ -2124,19 +2117,5 @@ if (typeof window !== 'undefined') {
       console.error('initAppKit error', e);
     }
     try { init(); } catch (e) { console.error('Init error', e); }
-    
-    // Background DNS keep-alive: Ping critical domains every 30s to keep DNS cached
-    // This helps prevent ERR_NAME_NOT_RESOLVED on Android after app switching
-    setInterval(async () => {
-      try {
-        // Silent ping - keeps DNS resolution fresh without blocking
-        await Promise.race([
-          fetch('https://relay.walletconnect.org/', { method: 'HEAD', mode: 'no-cors' }).catch(() => {}),
-          new Promise(r => setTimeout(r, 2000)) // Max 2s
-        ]);
-      } catch (e) {
-        // Silent fail - this is just a keep-alive, not critical
-      }
-    }, 30000); // Every 30 seconds
   });
 }
