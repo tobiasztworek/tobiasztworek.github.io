@@ -305,26 +305,37 @@ function renderNetworkCard(net) {
         if (rawProvider.session || rawProvider.client) {
           console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
           
-          // Check WebSocket connection state
-          const client = rawProvider.client;
-          const isConnected = client?.core?.relayer?.connected;
-          console.log('[TRANSACTION] WebSocket connected:', isConnected);
-          
-          // If disconnected, try to reconnect
-          if (isConnected === false) {
-            console.warn('[TRANSACTION] WebSocket disconnected, attempting to reconnect...');
-            try {
-              await client.core.relayer.transportOpen();
-              console.log('[TRANSACTION] WebSocket reconnected');
-              // Wait a bit for connection to stabilize
-              await new Promise(r => setTimeout(r, 1000));
-            } catch (wsError) {
-              console.error('[TRANSACTION] WebSocket reconnect failed:', wsError);
+          // Always try to ensure transport is open (helps with mobile WebSocket issues)
+          try {
+            console.log('[TRANSACTION] Ensuring transport is open...');
+            // Try different paths to access relayer
+            const client = rawProvider.client;
+            const relayer = client?.core?.relayer || client?.relayer;
+            
+            if (relayer) {
+              console.log('[TRANSACTION] Relayer found, checking connection...');
+              const isConnected = relayer.connected;
+              console.log('[TRANSACTION] Relayer connected:', isConnected);
+              
+              // Always try to open transport - it's idempotent if already open
+              try {
+                await relayer.transportOpen();
+                console.log('[TRANSACTION] Transport open call completed');
+                // Wait for connection to stabilize
+                await new Promise(r => setTimeout(r, 1500));
+              } catch (transportError) {
+                console.warn('[TRANSACTION] Transport open failed:', transportError);
+              }
+            } else {
+              console.warn('[TRANSACTION] Could not find relayer in provider');
             }
+          } catch (relayerError) {
+            console.error('[TRANSACTION] Relayer access error:', relayerError);
           }
           
           try {
             // Ping the session to ensure it's alive
+            console.log('[TRANSACTION] Pinging session...');
             const chainId = await rawProvider.request({ method: 'eth_chainId' });
             console.log('[TRANSACTION] Session ping successful, chainId:', chainId);
           } catch (pingError) {
@@ -334,6 +345,7 @@ function renderNetworkCard(net) {
               try {
                 await rawProvider.connect();
                 console.log('[TRANSACTION] Provider reconnected');
+                await new Promise(r => setTimeout(r, 1000));
               } catch (reconnectError) {
                 console.error('[TRANSACTION] Provider reconnect failed:', reconnectError);
               }
