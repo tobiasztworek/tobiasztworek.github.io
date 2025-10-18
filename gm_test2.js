@@ -299,8 +299,90 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
       
       console.log('[TRANSACTION] Sending GM transaction...');
-      const tx = await contract.sayGM({ value: feeWei });
-      console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
+      statusText.textContent = 'Sign in wallet then return here...';
+      
+      let tx;
+      try {
+        // Add timeout wrapper for mobile wallet issues
+        const txPromise = contract.sayGM({ value: feeWei });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('TIMEOUT')), 30000) // 30 second timeout
+        );
+        
+        tx = await Promise.race([txPromise, timeoutPromise]);
+        console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
+      } catch (txError) {
+        console.error('[TRANSACTION] Error sending transaction:', txError);
+        
+        // Check if user rejected
+        if (txError.code === 4001 || txError.code === 'ACTION_REJECTED') {
+          console.log('[TRANSACTION] User rejected transaction');
+          statusText.textContent = 'Transaction rejected';
+          return;
+        }
+        
+        // Check if timeout - try to get pending transaction from provider
+        if (txError.message === 'TIMEOUT') {
+          console.warn('[TRANSACTION] Timeout waiting for tx response - checking for pending tx...');
+          statusText.textContent = 'Checking transaction status...';
+          
+          // Try to get recent transactions from signer
+          try {
+            const s = await provider.getSigner();
+            const address = await s.getAddress();
+            const nonce = await provider.getTransactionCount(address, 'pending');
+            const latestNonce = await provider.getTransactionCount(address, 'latest');
+            
+            console.log('[TRANSACTION] Address:', address, 'Latest nonce:', latestNonce, 'Pending nonce:', nonce);
+            
+            if (nonce > latestNonce) {
+              console.log('[TRANSACTION] Pending transaction detected! Monitoring mempool...');
+              statusText.textContent = 'Transaction detected, waiting for confirmation...';
+              
+              // Start monitoring without tx hash - just wait for nonce change
+              const startNonce = latestNonce;
+              let confirmed = false;
+              let attempts = 0;
+              const maxAttempts = 60;
+              
+              while (attempts < maxAttempts && !confirmed) {
+                await new Promise(r => setTimeout(r, 2000));
+                attempts++;
+                
+                const currentNonce = await provider.getTransactionCount(address, 'latest');
+                if (currentNonce > startNonce) {
+                  console.log('✅ [TRANSACTION] Transaction confirmed (nonce changed)');
+                  statusText.textContent = 'GM completed successfully ☀️';
+                  txStatus.textContent = 'Confirmed (check wallet)';
+                  confirmed = true;
+                  break;
+                }
+                
+                if (attempts % 5 === 0) {
+                  console.log('[TRANSACTION] Still waiting... (', attempts * 2, 's)');
+                  statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
+                }
+              }
+              
+              if (!confirmed) {
+                statusText.textContent = 'Tx pending (check wallet)';
+                txStatus.textContent = 'Pending (check wallet history)';
+              }
+              
+              return; // Exit early
+            }
+          } catch (nonceError) {
+            console.error('[TRANSACTION] Error checking nonce:', nonceError);
+          }
+          
+          statusText.textContent = 'Transaction status unclear (check wallet)';
+          txStatus.textContent = 'Check your wallet history';
+          return;
+        }
+        
+        throw txError; // Re-throw other errors
+      }
+      
       txStatus.textContent = 'Tx sent: ' + tx.hash;
       statusText.textContent = 'Waiting for confirmation...';
       
