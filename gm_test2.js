@@ -271,6 +271,28 @@ function renderNetworkCard(net) {
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
       
+      // DNS PRE-WARMING: Force browser to resolve DNS before opening MetaMask
+      // This prevents ERR_NAME_NOT_RESOLVED after returning from MetaMask on mobile
+      console.log('[TRANSACTION] Pre-warming DNS connections...');
+      try {
+        // Force DNS lookup for WalletConnect relay (most critical)
+        await Promise.race([
+          fetch('https://relay.walletconnect.org/', { method: 'HEAD', mode: 'no-cors' }).catch(() => {}),
+          new Promise(r => setTimeout(r, 1000)) // Max 1s wait
+        ]);
+        
+        // Force DNS lookup for RPC endpoint
+        if (net?.rpcUrl) {
+          await Promise.race([
+            fetch(net.rpcUrl, { method: 'HEAD', mode: 'no-cors' }).catch(() => {}),
+            new Promise(r => setTimeout(r, 1000)) // Max 1s wait
+          ]);
+        }
+        console.log('[TRANSACTION] DNS pre-warming completed');
+      } catch (dnsError) {
+        console.warn('[TRANSACTION] DNS pre-warming failed (non-critical):', dnsError);
+      }
+      
       console.log('[TRANSACTION] Switching to network:', net.name, net.chainId);
       const ok = await switchToNetwork(net);
       if (!ok) { 
@@ -301,10 +323,28 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
       
       if (rawProvider) {
-        // CRITICAL: Clear pending requests FIRST (before any network calls)
-        if (rawProvider.signer?.client?.pendingRequest) {
-          console.log('[TRANSACTION] Clearing pending request from previous transaction...');
-          delete rawProvider.signer.client.pendingRequest;
+        // CRITICAL: Clear ALL cached data (pendingRequest, responses, etc.)
+        if (rawProvider.signer?.client) {
+          console.log('[TRANSACTION] Clearing WalletConnect client cache...');
+          const client = rawProvider.signer.client;
+          
+          // Clear pending request
+          if (client.pendingRequest) {
+            console.log('[TRANSACTION] - Clearing pendingRequest');
+            delete client.pendingRequest;
+          }
+          
+          // Clear response cache if exists
+          if (client.response) {
+            console.log('[TRANSACTION] - Clearing response cache');
+            delete client.response;
+          }
+          
+          // Clear any cached results
+          if (client.result) {
+            console.log('[TRANSACTION] - Clearing result cache');
+            delete client.result;
+          }
         }
         
         // Also clear from rpcProviders if exists
@@ -312,8 +352,12 @@ function renderNetworkCard(net) {
           console.log('[TRANSACTION] Clearing RPC provider caches...');
           Object.values(rawProvider.rpcProviders).forEach(rpc => {
             if (rpc?.pendingRequest) {
-              console.log('[TRANSACTION] Clearing pending request from RPC provider');
+              console.log('[TRANSACTION] - Clearing pending request from RPC provider');
               delete rpc.pendingRequest;
+            }
+            if (rpc?.response) {
+              console.log('[TRANSACTION] - Clearing response from RPC provider');
+              delete rpc.response;
             }
           });
         }
@@ -321,6 +365,16 @@ function renderNetworkCard(net) {
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
           console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
+          
+          // FORCE CACHE RESET: Send dummy request to reset MetaMask state
+          try {
+            console.log('[TRANSACTION] Forcing cache reset with eth_chainId request...');
+            await rawProvider.request({ method: 'eth_chainId' });
+            console.log('[TRANSACTION] Cache reset successful');
+            await new Promise(r => setTimeout(r, 500)); // Wait for cache to clear
+          } catch (resetError) {
+            console.warn('[TRANSACTION] Cache reset failed:', resetError);
+          }
           
           // Always try to ensure transport is open (helps with mobile WebSocket issues)
           try {
@@ -632,6 +686,17 @@ function renderNetworkCard(net) {
       statusText.textContent = 'Error in transaction';
     } finally {
       console.log('🔥 [TRANSACTION] Transaction flow completed, clearing flags');
+      
+      // CRITICAL: Clear ALL WalletConnect cache after transaction completes
+      const rawProvider = getActiveProvider();
+      if (rawProvider?.signer?.client) {
+        console.log('[TRANSACTION] POST-TX: Clearing WalletConnect cache for next transaction...');
+        const client = rawProvider.signer.client;
+        if (client.pendingRequest) delete client.pendingRequest;
+        if (client.response) delete client.response;
+        if (client.result) delete client.result;
+      }
+      
       isTransactionInProgress = false; // Always clear flag
       sayGmBtn.disabled = false;
     }
@@ -2073,5 +2138,19 @@ if (typeof window !== 'undefined') {
       console.error('initAppKit error', e);
     }
     try { init(); } catch (e) { console.error('Init error', e); }
+    
+    // Background DNS keep-alive: Ping critical domains every 30s to keep DNS cached
+    // This helps prevent ERR_NAME_NOT_RESOLVED on Android after app switching
+    setInterval(async () => {
+      try {
+        // Silent ping - keeps DNS resolution fresh without blocking
+        await Promise.race([
+          fetch('https://relay.walletconnect.org/', { method: 'HEAD', mode: 'no-cors' }).catch(() => {}),
+          new Promise(r => setTimeout(r, 2000)) // Max 2s
+        ]);
+      } catch (e) {
+        // Silent fail - this is just a keep-alive, not critical
+      }
+    }, 30000); // Every 30 seconds
   });
 }
