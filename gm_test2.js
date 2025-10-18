@@ -269,6 +269,17 @@ function renderNetworkCard(net) {
   sayGmBtn.addEventListener('click', async () => {
     try {
       console.log('🔥 [TRANSACTION] Starting GM transaction for', net.name);
+      
+      // CRITICAL: Restore window focus IMMEDIATELY before ANY operations
+      // This prevents "Document does not have focus, skipping deeplink" errors
+      try {
+        window.focus();
+        document.body.focus();
+        console.log('[TRANSACTION] Window focus restored at start');
+      } catch (focusError) {
+        console.warn('[TRANSACTION] Could not restore focus:', focusError);
+      }
+      
       isTransactionInProgress = true; // Block provider refresh during tx
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
@@ -303,49 +314,68 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
       
       if (rawProvider) {
-        // CRITICAL: Clear ALL cached data (pendingRequest, responses, etc.)
+        // CRITICAL: Clear ALL cached data to prevent showing old transaction status
         // For FIRST transaction: only clear pendingRequest (minimal interference)
-        // For SECOND+ transactions: aggressive clearing to prevent stale cache
+        // For SECOND+ transactions: NUCLEAR clearing - delete everything possible
         const isFirstTransaction = sessionTransactionCount === 0;
         
-        if (rawProvider.signer?.client) {
-          const client = rawProvider.signer.client;
+        if (!isFirstTransaction) {
+          console.log('[TRANSACTION] ☢️ NUCLEAR cache clearing (2nd+ transaction)...');
           
-          // Always clear pending request
-          if (client.pendingRequest) {
-            console.log('[TRANSACTION] - Clearing pendingRequest');
-            delete client.pendingRequest;
-          }
-          
-          // Clear response/result cache ONLY for 2nd+ transactions
-          if (!isFirstTransaction) {
-            console.log('[TRANSACTION] Aggressive cache clearing (2nd+ transaction)...');
+          // Clear from main client
+          if (rawProvider.signer?.client) {
+            const client = rawProvider.signer.client;
+            if (client.pendingRequest) {
+              console.log('[TRANSACTION] - Clearing client.pendingRequest');
+              delete client.pendingRequest;
+            }
             if (client.response) {
-              console.log('[TRANSACTION] - Clearing response cache');
+              console.log('[TRANSACTION] - Clearing client.response');
               delete client.response;
             }
             if (client.result) {
-              console.log('[TRANSACTION] - Clearing result cache');
+              console.log('[TRANSACTION] - Clearing client.result');
               delete client.result;
             }
-          } else {
-            console.log('[TRANSACTION] Minimal cache clearing (1st transaction)...');
+            // Clear session request cache
+            if (client.session?.request) {
+              console.log('[TRANSACTION] - Clearing session.request');
+              delete client.session.request;
+            }
+            // Clear any cached responses in session
+            if (client.session?.response) {
+              console.log('[TRANSACTION] - Clearing session.response');
+              delete client.session.response;
+            }
           }
-        }
-        
-        // Also clear from rpcProviders if exists (only for 2nd+ transactions)
-        if (!isFirstTransaction && rawProvider.rpcProviders) {
-          console.log('[TRANSACTION] Clearing RPC provider caches...');
-          Object.values(rawProvider.rpcProviders).forEach(rpc => {
-            if (rpc?.pendingRequest) {
-              console.log('[TRANSACTION] - Clearing pending request from RPC provider');
-              delete rpc.pendingRequest;
-            }
-            if (rpc?.response) {
-              console.log('[TRANSACTION] - Clearing response from RPC provider');
-              delete rpc.response;
-            }
-          });
+          
+          // Clear from rpcProviders
+          if (rawProvider.rpcProviders) {
+            console.log('[TRANSACTION] - Clearing ALL rpcProviders caches');
+            Object.values(rawProvider.rpcProviders).forEach(rpc => {
+              if (rpc?.pendingRequest) delete rpc.pendingRequest;
+              if (rpc?.response) delete rpc.response;
+              if (rpc?.result) delete rpc.result;
+              if (rpc?.requests) delete rpc.requests;
+            });
+          }
+          
+          // Clear from main provider
+          if (rawProvider.pendingRequest) {
+            console.log('[TRANSACTION] - Clearing rawProvider.pendingRequest');
+            delete rawProvider.pendingRequest;
+          }
+          if (rawProvider.response) {
+            console.log('[TRANSACTION] - Clearing rawProvider.response');
+            delete rawProvider.response;
+          }
+        } else {
+          console.log('[TRANSACTION] Minimal cache clearing (1st transaction)...');
+          // First transaction: only clear pendingRequest
+          if (rawProvider.signer?.client?.pendingRequest) {
+            console.log('[TRANSACTION] - Clearing pendingRequest');
+            delete rawProvider.signer.client.pendingRequest;
+          }
         }
         
         // For WalletConnect providers, try to refresh the session
@@ -437,15 +467,6 @@ function renderNetworkCard(net) {
       
       console.log('[TRANSACTION] Sending GM transaction...');
       statusText.textContent = 'Opening MetaMask...';
-      
-      // CRITICAL: Ensure document has focus before opening deeplink
-      // This prevents "Document does not have focus, skipping deeplink" error
-      try {
-        window.focus();
-        console.log('[TRANSACTION] Window focus restored');
-      } catch (focusError) {
-        console.warn('[TRANSACTION] Could not restore focus:', focusError);
-      }
       
       let tx;
       let txSent = false;
