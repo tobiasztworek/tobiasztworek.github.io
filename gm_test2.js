@@ -731,6 +731,23 @@ async function disconnect() {
           await modal.disconnect();
           console.log('[disconnect] Modal disconnect succeeded');
         }
+        
+        // Clear WalletConnect session data to prevent reusing expired sessions
+        try {
+          const wcKeys = Object.keys(localStorage).filter(k => 
+            k.startsWith('wc@2:') || 
+            k.startsWith('@walletconnect') ||
+            k.includes('walletconnect')
+          );
+          wcKeys.forEach(key => {
+            try {
+              localStorage.removeItem(key);
+              console.log('[disconnect] Cleared WalletConnect key:', key);
+            } catch (e) {}
+          });
+        } catch (e) {
+          console.warn('[disconnect] Failed to clear WalletConnect keys:', e);
+        }
       } catch (e) {
         console.warn('[disconnect] Modal disconnect failed:', e);
       }
