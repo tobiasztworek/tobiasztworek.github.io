@@ -236,6 +236,7 @@ function renderNetworkCard(net) {
       <button class="fetchFeeBtn btn btn-secondary flex-fill">Calculate fee</button>
       <button class="sayGmBtn btn btn-secondary flex-fill">Say GM ☀️</button>
     </div>
+    <small class="text-muted d-block mb-2">💡 Mobile: App returns automatically after signing - please wait ~10-15s for blockchain confirmation</small>
     <div class="txStatus">—</div>
   `;
   col.appendChild(container); networksRow.appendChild(col);
@@ -451,7 +452,7 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Current nonce before tx:', startNonce);
       
       console.log('[TRANSACTION] Sending GM transaction...');
-      statusText.textContent = 'Sign in wallet, then return and wait...';
+      statusText.textContent = 'Opening MetaMask...';
       
       let tx;
       let txSent = false;
@@ -459,7 +460,9 @@ function renderNetworkCard(net) {
       // Start nonce monitoring in parallel (for MetaMask Mobile quick return bug)
       const nonceMonitor = (async () => {
         console.log('[TRANSACTION] Starting parallel nonce monitoring...');
-        await new Promise(r => setTimeout(r, 5000)); // Wait 5s before starting to check
+        // Wait 5s, then update UI to show we're back and waiting
+        await new Promise(r => setTimeout(r, 5000));
+        statusText.textContent = '✓ Returned from MetaMask - verifying on blockchain...';
         
         let consecutiveFailures = 0;
         const maxConsecutiveFailures = 3;
@@ -500,7 +503,7 @@ function renderNetworkCard(net) {
         let waitTime = 0;
         const waitInterval = setInterval(() => {
           waitTime += 10;
-          statusText.textContent = `Waiting for wallet response... (${waitTime}s)`;
+          statusText.textContent = `⏳ Checking blockchain... (${waitTime}s)`;
           console.log('[TRANSACTION] Still waiting for wallet response...', waitTime, 's');
         }, 10000);
         
@@ -532,8 +535,8 @@ function renderNetworkCard(net) {
           // Transaction was detected by nonce monitor
           console.log('[TRANSACTION] Transaction detected by nonce monitor!');
           txSent = true;
-          statusText.textContent = 'GM completed successfully ☀️';
-          txStatus.textContent = 'Confirmed (detected by nonce change)';
+          statusText.textContent = '✅ Transaction confirmed on blockchain!';
+          txStatus.textContent = '☀️ GM sent successfully (verified by nonce)';
           return;
         }
         
