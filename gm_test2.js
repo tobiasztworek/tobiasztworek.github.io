@@ -361,17 +361,31 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
       
       console.log('[TRANSACTION] Sending GM transaction...');
-      statusText.textContent = 'Sign in wallet then return here...';
+      statusText.textContent = 'Sign in wallet, then return and wait...';
       
       let tx;
       try {
         // Add timeout wrapper for mobile wallet issues
+        // Longer timeout for mobile DNS issues (Android often needs 30-60s after app switch)
         const txPromise = contract.sayGM({ value: feeWei });
+        
+        // Show waiting feedback every 10 seconds
+        let waitTime = 0;
+        const waitInterval = setInterval(() => {
+          waitTime += 10;
+          statusText.textContent = `Waiting for wallet response... (${waitTime}s)`;
+          console.log('[TRANSACTION] Still waiting for wallet response...', waitTime, 's');
+        }, 10000);
+        
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('TIMEOUT')), 60000) // 60 second timeout
+          setTimeout(() => {
+            clearInterval(waitInterval);
+            reject(new Error('TIMEOUT'));
+          }, 120000) // 120 second (2 minute) timeout
         );
         
         tx = await Promise.race([txPromise, timeoutPromise]);
+        clearInterval(waitInterval);
         console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
       } catch (txError) {
         console.error('[TRANSACTION] Error sending transaction:', txError);
