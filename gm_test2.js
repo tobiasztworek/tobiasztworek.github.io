@@ -291,6 +291,11 @@ function renderNetworkCard(net) {
         console.log('[TRANSACTION] Network changed from', lastTransactionChainId, 'to', net.chainId, '- resetting tx counter');
         sessionTransactionCount = 0;
         lastTransactionChainId = net.chainId;
+        
+        // CRITICAL: Add delay after network switch for MetaMask Mobile to clear internal cache
+        // This prevents "Document does not have focus" errors and multiple deeplink attempts
+        console.log('[TRANSACTION] Waiting 3s after network switch for wallet to stabilize...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
       
       // NOTE: We do NOT clear cache before transaction anymore.
