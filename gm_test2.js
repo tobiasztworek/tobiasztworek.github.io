@@ -20,6 +20,7 @@ let networksRendered = false;
 let userInitiatedConnection = false; // Track if user manually triggered connection
 let isTransactionInProgress = false; // Block provider refresh during transactions
 let sessionTransactionCount = 0; // Track transactions in current session
+let lastTransactionChainId = null; // Track last transaction network
 
 // UI elements (populated during init)
 let connectBtn, bannerContainer, networksRow;
@@ -282,6 +283,13 @@ function renderNetworkCard(net) {
       const rawProvider = getActiveProvider();
       console.log('[TRANSACTION] Raw provider:', rawProvider);
       console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
+      
+      // Reset transaction counter if network changed
+      if (lastTransactionChainId !== net.chainId) {
+        console.log('[TRANSACTION] Network changed from', lastTransactionChainId, 'to', net.chainId, '- resetting tx counter');
+        sessionTransactionCount = 0;
+        lastTransactionChainId = net.chainId;
+      }
       
       if (rawProvider) {
         // CRITICAL: Clear ALL cached data to prevent showing old transaction status
