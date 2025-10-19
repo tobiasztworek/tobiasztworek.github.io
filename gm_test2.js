@@ -333,13 +333,15 @@ function renderNetworkCard(net) {
           try {
             // Ping the session to ensure it's alive
             console.log('[TRANSACTION] Pinging session...');
-            // Clear any cached responses before ping
+            // Clear any cached responses/results before ping to force fresh state
             if (rawProvider.rpcProviders) {
               Object.values(rawProvider.rpcProviders).forEach(rpc => {
                 if (rpc?.pendingRequest) {
                   console.log('[TRANSACTION] Clearing pending RPC request...');
                   delete rpc.pendingRequest;
                 }
+                if (rpc?.response) delete rpc.response;
+                if (rpc?.result) delete rpc.result;
               });
             }
             const chainId = await rawProvider.request({ method: 'eth_chainId' });
@@ -623,14 +625,28 @@ function renderNetworkCard(net) {
       if (rawProvider?.signer?.client) {
         console.log('[TRANSACTION] POST-TX: Clearing WalletConnect cache for next transaction...');
         const client = rawProvider.signer.client;
+        
+        // Clear client-level cache
         if (client.pendingRequest) delete client.pendingRequest;
         if (client.response) delete client.response;
         if (client.result) delete client.result;
+        
+        // Clear session-level cache (but NOT session.request/response as those break connection)
+        if (client.session) {
+          // Clear any pending topics or cached data
+          if (client.session.pendingRequest) delete client.session.pendingRequest;
+        }
+        
+        // Clear any request history
+        if (client.requests) delete client.requests;
       }
+      
       // Also clear from raw provider level
       if (rawProvider) {
         if (rawProvider.pendingRequest) delete rawProvider.pendingRequest;
         if (rawProvider.response) delete rawProvider.response;
+        if (rawProvider.result) delete rawProvider.result;
+        if (rawProvider.requests) delete rawProvider.requests;
       }
       
       isTransactionInProgress = false; // Always clear flag
