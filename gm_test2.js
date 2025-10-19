@@ -465,7 +465,14 @@ function renderNetworkCard(net) {
       
       try {
         // Try to get tx response (often fails on MetaMask Mobile)
-        const txPromise = contract.sayGM({ value: feeWei });
+        // For Optimism, use explicit gas limit with buffer (gas estimation can fail)
+        const txOptions = { value: feeWei };
+        if (net.chainId === '0xaa37dc') { // Optimism Sepolia
+          txOptions.gasLimit = 100000; // Explicit gas limit with buffer
+          console.log('[TRANSACTION] Using explicit gas limit for Optimism:', txOptions.gasLimit);
+        }
+        
+        const txPromise = contract.sayGM(txOptions);
         
         // Show waiting feedback every 10 seconds
         let waitTime = 0;
