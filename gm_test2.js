@@ -333,8 +333,8 @@ function renderNetworkCard(net) {
           try {
             // CRITICAL: Clear WalletConnect session cache BEFORE new transaction
             // This prevents MetaMask from showing cached prompts from previous transaction
-            if (rawProvider?.signer?.client) {
-              const client = rawProvider.signer.client;
+            const client = rawProvider.client;
+            if (client) {
               console.log('[TRANSACTION] PRE-TX: Clearing WalletConnect session cache...');
               if (client.pendingRequest) delete client.pendingRequest;
               if (client.response) delete client.response;
@@ -631,9 +631,9 @@ function renderNetworkCard(net) {
       // This prevents "transaction completed" message from showing on next transaction
       // DO NOT clear rawProvider cache - it contains RPC connections we need to preserve
       const rawProvider = getActiveProvider();
-      if (rawProvider?.signer?.client) {
+      const client = rawProvider?.client;
+      if (client) {
         console.log('[TRANSACTION] POST-TX: Clearing WalletConnect session cache (NOT RPC provider)...');
-        const client = rawProvider.signer.client;
         
         // Clear ONLY client-level cache (WalletConnect session data)
         // DO NOT touch rawProvider cache - it breaks RPC connections causing DNS errors
