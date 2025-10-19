@@ -331,6 +331,16 @@ function renderNetworkCard(net) {
           }
           
           try {
+            // CRITICAL: Clear WalletConnect session cache BEFORE new transaction
+            // This prevents MetaMask from showing cached prompts from previous transaction
+            if (rawProvider?.signer?.client) {
+              const client = rawProvider.signer.client;
+              console.log('[TRANSACTION] PRE-TX: Clearing WalletConnect session cache...');
+              if (client.pendingRequest) delete client.pendingRequest;
+              if (client.response) delete client.response;
+              if (client.result) delete client.result;
+            }
+            
             // Ping the session to ensure it's alive
             console.log('[TRANSACTION] Pinging session...');
             // Only clear pending requests before ping (not responses/results - those are needed)
