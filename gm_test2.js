@@ -293,42 +293,11 @@ function renderNetworkCard(net) {
         lastTransactionChainId = net.chainId;
       }
       
+      // NOTE: We do NOT clear cache before transaction anymore.
+      // Cache is cleared in finally block AFTER transaction completes.
+      // Clearing before transaction causes connection issues on mobile.
+      
       if (rawProvider) {
-        // CRITICAL: Clear cached data to prevent showing old transaction status
-        // We use MEDIUM clearing - enough to clear old status but not break connections
-        console.log('[TRANSACTION] Clearing WalletConnect cache...');
-        
-        // Clear from main client - these cache old transaction responses
-        if (rawProvider.signer?.client) {
-          const client = rawProvider.signer.client;
-          if (client.pendingRequest) {
-            console.log('[TRANSACTION] - Clearing client.pendingRequest');
-            delete client.pendingRequest;
-          }
-          if (client.response) {
-            console.log('[TRANSACTION] - Clearing client.response');
-            delete client.response;
-          }
-          if (client.result) {
-            console.log('[TRANSACTION] - Clearing client.result');
-            delete client.result;
-          }
-        }
-        
-        // Clear from main provider
-        if (rawProvider.pendingRequest) {
-          console.log('[TRANSACTION] - Clearing rawProvider.pendingRequest');
-          delete rawProvider.pendingRequest;
-        }
-        if (rawProvider.response) {
-          console.log('[TRANSACTION] - Clearing rawProvider.response');
-          delete rawProvider.response;
-        }
-        
-        // NOTE: We do NOT clear session.request, session.response or rpcProviders
-        // Those are connection state, not transaction cache.
-        // Clearing them causes DNS resolution failures on mobile.
-        
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
           console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
@@ -648,7 +617,8 @@ function renderNetworkCard(net) {
         console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
       }
       
-      // CRITICAL: Clear ALL WalletConnect cache after transaction completes
+      // CRITICAL: Clear WalletConnect cache after transaction completes
+      // This prevents "transaction completed" message from showing on next transaction
       const rawProvider = getActiveProvider();
       if (rawProvider?.signer?.client) {
         console.log('[TRANSACTION] POST-TX: Clearing WalletConnect cache for next transaction...');
@@ -656,6 +626,11 @@ function renderNetworkCard(net) {
         if (client.pendingRequest) delete client.pendingRequest;
         if (client.response) delete client.response;
         if (client.result) delete client.result;
+      }
+      // Also clear from raw provider level
+      if (rawProvider) {
+        if (rawProvider.pendingRequest) delete rawProvider.pendingRequest;
+        if (rawProvider.response) delete rawProvider.response;
       }
       
       isTransactionInProgress = false; // Always clear flag
