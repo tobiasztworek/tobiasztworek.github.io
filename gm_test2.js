@@ -654,9 +654,13 @@ function renderNetworkCard(net) {
     } finally {
       console.log('🔥 [TRANSACTION] Transaction flow completed, clearing flags');
       
-      // Increment transaction counter for this session
-      sessionTransactionCount++;
-      console.log('[TRANSACTION] Session tx count:', sessionTransactionCount);
+      // Increment transaction counter ONLY if transaction was actually sent
+      if (txSent) {
+        sessionTransactionCount++;
+        console.log('[TRANSACTION] Transaction sent successfully - session tx count:', sessionTransactionCount);
+      } else {
+        console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
+      }
       
       // CRITICAL: Clear ALL WalletConnect cache after transaction completes
       const rawProvider = getActiveProvider();
