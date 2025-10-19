@@ -327,16 +327,9 @@ function renderNetworkCard(net) {
             }
           }
           
-          // Clear from rpcProviders
-          if (rawProvider.rpcProviders) {
-            console.log('[TRANSACTION] - Clearing ALL rpcProviders caches');
-            Object.values(rawProvider.rpcProviders).forEach(rpc => {
-              if (rpc?.pendingRequest) delete rpc.pendingRequest;
-              if (rpc?.response) delete rpc.response;
-              if (rpc?.result) delete rpc.result;
-              if (rpc?.requests) delete rpc.requests;
-            });
-          }
+          // NOTE: We do NOT clear rpcProviders - these are network connections
+          // that need to stay alive for fee fetching and transaction monitoring.
+          // Only clear WalletConnect session cache above.
           
           // Clear from main provider
           if (rawProvider.pendingRequest) {
