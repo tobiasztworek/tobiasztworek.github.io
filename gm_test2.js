@@ -294,62 +294,26 @@ function renderNetworkCard(net) {
       }
       
       if (rawProvider) {
-        // CRITICAL: Clear ALL cached data to prevent showing old transaction status
-        // For FIRST transaction: only clear pendingRequest (minimal interference)
-        // For SECOND+ transactions: NUCLEAR clearing - delete everything possible
-        const isFirstTransaction = sessionTransactionCount === 0;
+        // CRITICAL: Clear cached pendingRequest to prevent showing old transaction status
+        // We use MINIMAL clearing for ALL transactions - more aggressive clearing
+        // causes DNS/connection issues on mobile after returning from wallet app
+        console.log('[TRANSACTION] Clearing WalletConnect cache...');
         
-        if (!isFirstTransaction) {
-          console.log('[TRANSACTION] ☢️ NUCLEAR cache clearing (2nd+ transaction)...');
-          
-          // Clear from main client
-          if (rawProvider.signer?.client) {
-            const client = rawProvider.signer.client;
-            if (client.pendingRequest) {
-              console.log('[TRANSACTION] - Clearing client.pendingRequest');
-              delete client.pendingRequest;
-            }
-            if (client.response) {
-              console.log('[TRANSACTION] - Clearing client.response');
-              delete client.response;
-            }
-            if (client.result) {
-              console.log('[TRANSACTION] - Clearing client.result');
-              delete client.result;
-            }
-            // Clear session request cache
-            if (client.session?.request) {
-              console.log('[TRANSACTION] - Clearing session.request');
-              delete client.session.request;
-            }
-            // Clear any cached responses in session
-            if (client.session?.response) {
-              console.log('[TRANSACTION] - Clearing session.response');
-              delete client.session.response;
-            }
-          }
-          
-          // NOTE: We do NOT clear rpcProviders - these are network connections
-          // that need to stay alive for fee fetching and transaction monitoring.
-          // Only clear WalletConnect session cache above.
-          
-          // Clear from main provider
-          if (rawProvider.pendingRequest) {
-            console.log('[TRANSACTION] - Clearing rawProvider.pendingRequest');
-            delete rawProvider.pendingRequest;
-          }
-          if (rawProvider.response) {
-            console.log('[TRANSACTION] - Clearing rawProvider.response');
-            delete rawProvider.response;
-          }
-        } else {
-          console.log('[TRANSACTION] Minimal cache clearing (1st transaction)...');
-          // First transaction: only clear pendingRequest
-          if (rawProvider.signer?.client?.pendingRequest) {
-            console.log('[TRANSACTION] - Clearing pendingRequest');
-            delete rawProvider.signer.client.pendingRequest;
-          }
+        // Clear pendingRequest from main client (this is the most important)
+        if (rawProvider.signer?.client?.pendingRequest) {
+          console.log('[TRANSACTION] - Clearing client.pendingRequest');
+          delete rawProvider.signer.client.pendingRequest;
         }
+        
+        // Also clear from main provider if it exists there
+        if (rawProvider.pendingRequest) {
+          console.log('[TRANSACTION] - Clearing rawProvider.pendingRequest');
+          delete rawProvider.pendingRequest;
+        }
+        
+        // NOTE: We do NOT clear response, result, session.request, session.response
+        // or rpcProviders - these are needed for stable connections on mobile.
+        // Aggressive clearing causes DNS resolution failures after app switching.
         
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
