@@ -617,24 +617,19 @@ function renderNetworkCard(net) {
         console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
       }
       
-      // CRITICAL: Clear WalletConnect cache after transaction completes
+      // CRITICAL: Clear WalletConnect SESSION cache after transaction completes
       // This prevents "transaction completed" message from showing on next transaction
+      // DO NOT clear rawProvider cache - it contains RPC connections we need to preserve
       const rawProvider = getActiveProvider();
       if (rawProvider?.signer?.client) {
-        console.log('[TRANSACTION] POST-TX: Clearing WalletConnect cache for next transaction...');
+        console.log('[TRANSACTION] POST-TX: Clearing WalletConnect session cache (NOT RPC provider)...');
         const client = rawProvider.signer.client;
         
-        // Clear client-level cache (transaction-specific data)
+        // Clear ONLY client-level cache (WalletConnect session data)
+        // DO NOT touch rawProvider cache - it breaks RPC connections causing DNS errors
         if (client.pendingRequest) delete client.pendingRequest;
         if (client.response) delete client.response;
         if (client.result) delete client.result;
-      }
-      
-      // Also clear from raw provider level
-      if (rawProvider) {
-        if (rawProvider.pendingRequest) delete rawProvider.pendingRequest;
-        if (rawProvider.response) delete rawProvider.response;
-        if (rawProvider.result) delete rawProvider.result;
       }
       
       isTransactionInProgress = false; // Always clear flag
