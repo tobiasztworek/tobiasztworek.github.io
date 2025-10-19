@@ -294,26 +294,40 @@ function renderNetworkCard(net) {
       }
       
       if (rawProvider) {
-        // CRITICAL: Clear cached pendingRequest to prevent showing old transaction status
-        // We use MINIMAL clearing for ALL transactions - more aggressive clearing
-        // causes DNS/connection issues on mobile after returning from wallet app
+        // CRITICAL: Clear cached data to prevent showing old transaction status
+        // We use MEDIUM clearing - enough to clear old status but not break connections
         console.log('[TRANSACTION] Clearing WalletConnect cache...');
         
-        // Clear pendingRequest from main client (this is the most important)
-        if (rawProvider.signer?.client?.pendingRequest) {
-          console.log('[TRANSACTION] - Clearing client.pendingRequest');
-          delete rawProvider.signer.client.pendingRequest;
+        // Clear from main client - these cache old transaction responses
+        if (rawProvider.signer?.client) {
+          const client = rawProvider.signer.client;
+          if (client.pendingRequest) {
+            console.log('[TRANSACTION] - Clearing client.pendingRequest');
+            delete client.pendingRequest;
+          }
+          if (client.response) {
+            console.log('[TRANSACTION] - Clearing client.response');
+            delete client.response;
+          }
+          if (client.result) {
+            console.log('[TRANSACTION] - Clearing client.result');
+            delete client.result;
+          }
         }
         
-        // Also clear from main provider if it exists there
+        // Clear from main provider
         if (rawProvider.pendingRequest) {
           console.log('[TRANSACTION] - Clearing rawProvider.pendingRequest');
           delete rawProvider.pendingRequest;
         }
+        if (rawProvider.response) {
+          console.log('[TRANSACTION] - Clearing rawProvider.response');
+          delete rawProvider.response;
+        }
         
-        // NOTE: We do NOT clear response, result, session.request, session.response
-        // or rpcProviders - these are needed for stable connections on mobile.
-        // Aggressive clearing causes DNS resolution failures after app switching.
+        // NOTE: We do NOT clear session.request, session.response or rpcProviders
+        // Those are connection state, not transaction cache.
+        // Clearing them causes DNS resolution failures on mobile.
         
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
