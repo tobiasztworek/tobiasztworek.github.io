@@ -248,6 +248,8 @@ function renderNetworkCard(net) {
   addBtn.addEventListener('click', async () => { try { await addNetworkById(parseInt(net.chainId, 16)); } catch (e) { console.error(e); showBanner('Error adding network', 'danger'); } });
   
   sayGmBtn.addEventListener('click', async () => {
+    let txSent = false; // Track if transaction was actually sent (needed in finally block)
+    
     try {
       console.log('🔥 [TRANSACTION] Starting GM transaction for', net.name);
       
@@ -443,8 +445,7 @@ function renderNetworkCard(net) {
       console.log('[TRANSACTION] Sending GM transaction...');
       statusText.textContent = 'Opening MetaMask...';
       
-      let tx;
-      let txSent = false;
+      let tx; // Will hold transaction object
       
       // Start nonce monitoring in parallel (for MetaMask Mobile quick return bug)
       const nonceMonitor = (async () => {
