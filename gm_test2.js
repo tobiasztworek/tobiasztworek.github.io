@@ -623,6 +623,21 @@ function renderNetworkCard(net) {
       if (txSent) {
         sessionTransactionCount++;
         console.log('[TRANSACTION] Transaction sent successfully - session tx count:', sessionTransactionCount);
+        
+        // CRITICAL: Try to force MetaMask Mobile to close "Transaction complete" screen
+        // This prevents the cached screen from showing on next transaction
+        try {
+          const rawProvider = getActiveProvider();
+          if (rawProvider?.session) {
+            console.log('[TRANSACTION] POST-TX: Requesting session update to force UI refresh...');
+            // Ping session to force MetaMask to update its UI state
+            await rawProvider.request({ method: 'eth_chainId' });
+            // Small delay to let MetaMask process
+            await new Promise(r => setTimeout(r, 500));
+          }
+        } catch (refreshError) {
+          console.warn('[TRANSACTION] Post-tx session refresh failed:', refreshError);
+        }
       } else {
         console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
       }
