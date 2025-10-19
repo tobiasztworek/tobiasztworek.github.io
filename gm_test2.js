@@ -331,14 +331,13 @@ function renderNetworkCard(net) {
           }
           
           try {
-            // CRITICAL: Clear WalletConnect session cache BEFORE new transaction
-            // This prevents MetaMask from showing cached prompts from previous transaction
+            // CRITICAL: Clear ONLY pendingRequest BEFORE new transaction
+            // This prevents MetaMask from re-opening cached prompts
+            // DO NOT clear response/result - they're needed for RPC state
             const client = rawProvider.client;
-            if (client) {
-              console.log('[TRANSACTION] PRE-TX: Clearing WalletConnect session cache...');
-              if (client.pendingRequest) delete client.pendingRequest;
-              if (client.response) delete client.response;
-              if (client.result) delete client.result;
+            if (client?.pendingRequest) {
+              console.log('[TRANSACTION] PRE-TX: Clearing pending request...');
+              delete client.pendingRequest;
             }
             
             // Ping the session to ensure it's alive
@@ -627,19 +626,14 @@ function renderNetworkCard(net) {
         console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
       }
       
-      // CRITICAL: Clear WalletConnect SESSION cache after transaction completes
-      // This prevents "transaction completed" message from showing on next transaction
-      // DO NOT clear rawProvider cache - it contains RPC connections we need to preserve
+      // CRITICAL: Clear ONLY pendingRequest after transaction
+      // This prevents showing "transaction completed" cached status on next transaction
+      // DO NOT clear response/result - they contain RPC state needed for next transaction
       const rawProvider = getActiveProvider();
       const client = rawProvider?.client;
-      if (client) {
-        console.log('[TRANSACTION] POST-TX: Clearing WalletConnect session cache (NOT RPC provider)...');
-        
-        // Clear ONLY client-level cache (WalletConnect session data)
-        // DO NOT touch rawProvider cache - it breaks RPC connections causing DNS errors
-        if (client.pendingRequest) delete client.pendingRequest;
-        if (client.response) delete client.response;
-        if (client.result) delete client.result;
+      if (client?.pendingRequest) {
+        console.log('[TRANSACTION] POST-TX: Clearing pending request...');
+        delete client.pendingRequest;
       }
       
       isTransactionInProgress = false; // Always clear flag
