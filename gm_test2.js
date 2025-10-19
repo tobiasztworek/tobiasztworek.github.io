@@ -323,8 +323,9 @@ function renderNetworkCard(net) {
               try {
                 await relayer.transportOpen();
                 console.log('[TRANSACTION] Transport open call completed');
-                // Wait for connection to stabilize
-                await new Promise(r => setTimeout(r, 1500));
+                // Wait for connection to stabilize - increased to 3s for consecutive transactions
+                console.log('[TRANSACTION] Waiting 3s for transport to stabilize...');
+                await new Promise(r => setTimeout(r, 3000));
               } catch (transportError) {
                 console.warn('[TRANSACTION] Transport open failed:', transportError);
               }
