@@ -336,14 +336,9 @@ function renderNetworkCard(net) {
           }
           
           try {
-            // CRITICAL: Clear ONLY pendingRequest BEFORE new transaction
-            // This prevents MetaMask from re-opening cached prompts
-            // DO NOT clear response/result - they're needed for RPC state
-            const client = rawProvider.client;
-            if (client?.pendingRequest) {
-              console.log('[TRANSACTION] PRE-TX: Clearing pending request...');
-              delete client.pendingRequest;
-            }
+            // NOTE: We tested clearing client.pendingRequest here but it caused fee fetch timeouts
+            // MetaMask Mobile handles its own cache - we cannot control it from dApp side
+            // Multiple opens after network switch are a MetaMask Mobile behavior we must accept
             
             // Ping the session to ensure it's alive
             console.log('[TRANSACTION] Pinging session...');
@@ -631,15 +626,9 @@ function renderNetworkCard(net) {
         console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
       }
       
-      // CRITICAL: Clear ONLY pendingRequest after transaction
-      // This prevents showing "transaction completed" cached status on next transaction
-      // DO NOT clear response/result - they contain RPC state needed for next transaction
-      const rawProvider = getActiveProvider();
-      const client = rawProvider?.client;
-      if (client?.pendingRequest) {
-        console.log('[TRANSACTION] POST-TX: Clearing pending request...');
-        delete client.pendingRequest;
-      }
+      // NOTE: We do NOT clear any cache after transaction.
+      // All clearing attempts (even minimal) caused fee fetch timeouts on consecutive transactions.
+      // MetaMask Mobile manages its own cache - we cannot and should not interfere.
       
       isTransactionInProgress = false; // Always clear flag
       sayGmBtn.disabled = false;
