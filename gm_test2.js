@@ -25,6 +25,8 @@ let lastTransactionChainId = null; // Track last transaction network
 // UI elements (populated during init)
 let connectBtn, bannerContainer, networksRow;
 
+//0x99510A8C66Af928635287CE6E3a480cE788c3960 base mainnet contract
+
 // Networks
 const NETWORKS = [
   {
@@ -53,6 +55,17 @@ const NETWORKS = [
     explorer: 'https://testnet-explorer.optimism.io/',
     buttonColor: '#FC0C2C',
     logoUrl: 'img/optimism.svg',
+  },
+
+  // mainnets 
+  {
+    name: 'Base Mainnet',
+    chainId: '0x2105',
+    contractAddress: '0x99510A8C66Af928635287CE6E3a480cE788c3960',
+    rpcUrl: 'https://base-rpc.publicnode.com',
+    explorer: 'https://basescan.org/',
+    buttonColor: '#1a46e5',
+    logoUrl: 'img/base.jpg',
   },
 ];
 
