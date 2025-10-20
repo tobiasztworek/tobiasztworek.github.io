@@ -3,6 +3,9 @@ import { createAppKit } from '@reown/appkit';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
+// Version
+const APP_VERSION = '1.9.4';
+
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
 const metadata = {
@@ -82,7 +85,7 @@ const NETWORKS = [
     name: 'Celo Mainnet',
     chainId: '0xa4ec',
     contractAddress: '0xea97aE69A60ec6cc3549ea912ad6617E65d480fB',
-    rpcUrl: 'https://celo.drpc.org',
+    rpcUrl: 'https://forno.celo.org',
     explorer: 'https://celoscan.io/',
     buttonColor: '#fcec0cff',
     logoUrl: 'img/celo.jpg',
@@ -718,7 +721,7 @@ async function switchToNetwork(net) {
   console.log('🔶 [FUNCTION] switchToNetwork() STARTED for', net.name);
   const p = getActiveProvider();
   const params = [{ chainId: net.chainId }];
-  const addParams = [{ chainId: net.chainId, chainName: net.name, nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: [net.rpcUrl], blockExplorerUrls: [net.explorer] }];
+  const addParams = [{ chainId: net.chainId, chainName: net.name, nativeCurrency: net.nativeCurrency || { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: [net.rpcUrl], blockExplorerUrls: [net.explorer] }];
   if (p && typeof p.request === 'function') {
     try { await p.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await p.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('addChain failed', e); } } else { console.warn('provider switch failed', err); } }
   }
