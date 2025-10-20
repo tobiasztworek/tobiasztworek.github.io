@@ -26,6 +26,7 @@ let lastTransactionChainId = null; // Track last transaction network
 let connectBtn, bannerContainer, networksRow;
 
 //0x99510A8C66Af928635287CE6E3a480cE788c3960 base mainnet contract
+//0xea97aE69A60ec6cc3549ea912ad6617E65d480fB celo mainnet contract
 
 // Networks
 const NETWORKS = [
@@ -37,6 +38,8 @@ const NETWORKS = [
     explorer: 'https://sepolia.basescan.org/',
     buttonColor: '#1a46e5',
     logoUrl: 'img/base.jpg',
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    feeFunction: 'getGmFeeInEth', // Function name in contract
   },
   {
     name: 'Ethereum Sepolia',
@@ -46,6 +49,8 @@ const NETWORKS = [
     explorer: 'https://sepolia.etherscan.io/',
     buttonColor: '#222222',
     logoUrl: 'img/ether.svg',
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    feeFunction: 'getGmFeeInEth',
   },
   {
     name: 'Optimism Sepolia',
@@ -55,7 +60,11 @@ const NETWORKS = [
     explorer: 'https://testnet-explorer.optimism.io/',
     buttonColor: '#FC0C2C',
     logoUrl: 'img/optimism.svg',
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    feeFunction: 'getGmFeeInEth',
   },
+
+
 
   // mainnets 
   {
@@ -66,12 +75,26 @@ const NETWORKS = [
     explorer: 'https://basescan.org/',
     buttonColor: '#1a46e5',
     logoUrl: 'img/base.jpg',
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    feeFunction: 'getGmFeeInEth',
   },
+    {
+    name: 'Celo Mainnet',
+    chainId: '0xa4ec',
+    contractAddress: '0xea97aE69A60ec6cc3549ea912ad6617E65d480fB',
+    rpcUrl: 'https://celo.drpc.org',
+    explorer: 'https://celoscan.io/',
+    buttonColor: '#fcec0cff',
+    logoUrl: 'img/celo.jpg',
+    nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+    feeFunction: 'getGmFeeInCelo', // Special function for Celo
+  }
 ];
 
 const GM_ABI = [
   'function sayGM() external payable',
   'function getGmFeeInEth() view returns (uint256)',
+  'function getGmFeeInCelo() view returns (uint256)',
   // ...existing code...
 ];
 
@@ -212,7 +235,7 @@ async function addNetworkById(chainId) {
   const addParams = {
     chainId: net.chainId,
     chainName: net.name,
-    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    nativeCurrency: net.nativeCurrency || { name: 'ETH', symbol: 'ETH', decimals: 18 },
     rpcUrls: [net.rpcUrl],
     blockExplorerUrls: [net.explorer],
   };
@@ -390,6 +413,11 @@ function renderNetworkCard(net) {
       statusText.textContent = 'Fetching fee...';
       let feeWei;
       
+      // Determine which fee function to use based on network
+      const feeFunctionName = net.feeFunction || 'getGmFeeInEth';
+      const currencySymbol = net.nativeCurrency?.symbol || 'ETH';
+      console.log(`[TRANSACTION] Using fee function: ${feeFunctionName} for currency: ${currencySymbol}`);
+      
       // Try up to 2 times with longer timeout
       let feeAttempts = 0;
       const maxFeeAttempts = 2;
@@ -402,14 +430,15 @@ function renderNetworkCard(net) {
             statusText.textContent = `Retrying fee fetch (${feeAttempts}/${maxFeeAttempts})...`;
           }
           
-          const feePromise = contract.getGmFeeInEth();
+          // Call the appropriate fee function based on network
+          const feePromise = contract[feeFunctionName]();
           const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error('Fee fetch timeout')), 30000) // 30s timeout (doubled)
           );
           
           feeWei = await Promise.race([feePromise, timeoutPromise]);
-          console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
-          statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ETH`;
+          console.log(`[TRANSACTION] GM fee: ${ethers.formatEther(feeWei)} ${currencySymbol}`);
+          statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ${currencySymbol}`;
           break; // Success - exit retry loop
           
         } catch (feeError) {
