@@ -4,7 +4,7 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '1.9.4';
+const APP_VERSION = '1.9.5';
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
@@ -26,7 +26,7 @@ let sessionTransactionCount = 0; // Track transactions in current session
 let lastTransactionChainId = null; // Track last transaction network
 
 // UI elements (populated during init)
-let connectBtn, bannerContainer, networksRow;
+let connectBtn, bannerContainer, networksRow, networkBtn;
 
 //0x99510A8C66Af928635287CE6E3a480cE788c3960 base mainnet contract
 //0xea97aE69A60ec6cc3549ea912ad6617E65d480fB celo mainnet contract
@@ -121,6 +121,16 @@ export function initAppKit() {
 }
 
 // ----- Utilities -----
+function updateNetworkButtonVisibility() {
+  if (!networkBtn) return;
+  // Show network button only when wallet is connected
+  if (activeEip1193Provider && signer) {
+    networkBtn.style.display = 'inline-block';
+  } else {
+    networkBtn.style.display = 'none';
+  }
+}
+
 function showBanner(message, type = 'info', actions = []) {
   if (!bannerContainer) return;
   bannerContainer.innerHTML = '';
@@ -757,6 +767,7 @@ async function connect() {
       if (provider) {
         signer = await provider.getSigner();
         connectBtn.textContent = 'Disconnect';
+        updateNetworkButtonVisibility();
         clearBanner();
         renderNetworkUIOnce();
         
@@ -812,7 +823,8 @@ async function connect() {
     try {
       // Optimistically accept the modal provider so UI updates immediately.
       activeEip1193Provider = providerCandidate;
-  connectBtn.textContent = 'Disconnect';
+      connectBtn.textContent = 'Disconnect';
+      updateNetworkButtonVisibility();
       clearBanner();
       renderNetworkUIOnce();
       // attach provider listeners right away if possible
@@ -879,7 +891,7 @@ async function connect() {
     try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { console.warn('eth_requestAccounts failed', e); }
   }
   const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
-  signer = await provider.getSigner(); connectBtn.textContent = 'Disconnect'; clearBanner(); renderNetworkUIOnce();
+  signer = await provider.getSigner(); connectBtn.textContent = 'Disconnect'; updateNetworkButtonVisibility(); clearBanner(); renderNetworkUIOnce();
   
   // Reset broken session counters on successful connection
   if (brokenSessionCount > 0) {
@@ -974,6 +986,7 @@ function setupResumeHandlers() {
           if (provider) {
             signer = await provider.getSigner();
             connectBtn.textContent = 'Disconnect';
+            updateNetworkButtonVisibility();
             clearBanner();
             renderNetworkUIOnce();
             // await updateCurrentNetworkStats();
@@ -1129,6 +1142,7 @@ function handleModalDisconnection() {
   if (connectBtn) {
     connectBtn.textContent = 'Connect Wallet';
   }
+  updateNetworkButtonVisibility();
   
   // Clear any success banners
   clearBanner();
@@ -1636,6 +1650,7 @@ async function forceRefreshProvider(userInitiated = false) {
       // update UI safely
       try {
         connectBtn.textContent = 'Disconnect';
+        updateNetworkButtonVisibility();
         clearBanner();
         renderNetworkUIOnce();
         
@@ -1731,7 +1746,7 @@ try {
   }
 } catch (e) {}
 
-async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Disconnect'; clearBanner(); renderNetworkUIOnce(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
+async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Disconnect'; updateNetworkButtonVisibility(); clearBanner(); renderNetworkUIOnce(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
   console.log('🔄 [FUNCTION] tryRestoreConnection() STARTED');
@@ -1761,6 +1776,7 @@ async function tryRestoreConnection() {
               activeEip1193Provider = p; 
               signer = (await getEthersProvider())?.getSigner(); 
               connectBtn.textContent = 'Disconnect'; 
+              updateNetworkButtonVisibility();
               renderNetworkUIOnce(); 
               // await updateCurrentNetworkStats(); 
               return true; 
@@ -1817,6 +1833,7 @@ async function tryRestoreConnection() {
           activeEip1193Provider = window.ethereum; 
           signer = (await getEthersProvider())?.getSigner(); 
           connectBtn.textContent = 'Disconnect'; 
+          updateNetworkButtonVisibility();
           renderNetworkUIOnce(); 
           // await updateCurrentNetworkStats();
           console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - SUCCESS'); 
@@ -1949,7 +1966,12 @@ export function init() {
   }
   initCalled = true;
   
-  connectBtn = document.getElementById('connectBtn'); networksRow = document.getElementById('networksRow'); bannerContainer = document.createElement('div'); bannerContainer.style.margin = '12px 0'; const header = document.querySelector('header');
+  connectBtn = document.getElementById('connectBtn'); 
+  networkBtn = document.getElementById('networkBtn');
+  networksRow = document.getElementById('networksRow'); 
+  bannerContainer = document.createElement('div'); 
+  bannerContainer.style.margin = '12px 0'; 
+  const header = document.querySelector('header');
   if (header) {
     header.appendChild(bannerContainer);
     try {
@@ -2029,6 +2051,25 @@ export function init() {
       }, 500);
     }
   }); 
+  
+  // Network button - open AppKit network modal
+  if (networkBtn) {
+    networkBtn.addEventListener('click', () => {
+      console.log('🌐 [NETWORK BUTTON] Opening AppKit network selector');
+      try {
+        const modal = initAppKit();
+        if (modal && typeof modal.open === 'function') {
+          modal.open({ view: 'Networks' });
+        } else {
+          showBanner('Network selector not available', 'warning');
+        }
+      } catch (e) {
+        console.error('Failed to open network modal:', e);
+        showBanner('Failed to open network selector', 'danger');
+      }
+    });
+  }
+  
   renderNetworkUIOnce(); 
   tryRestoreConnection().catch(e => console.error('restore failed', e));
   
