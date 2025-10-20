@@ -4,7 +4,7 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '1.9.8';
+const APP_VERSION = '1.9.9';
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
@@ -751,6 +751,18 @@ async function switchToNetwork(net) {
 async function connect() {
   console.log('🔵 [FUNCTION] connect() STARTED');
   userInitiatedConnection = true; // Mark this as user-initiated
+  
+  // Clear stale AppKit localStorage if marked as disconnected
+  try {
+    const connectionStatus = localStorage.getItem('@appkit/connection_status');
+    if (connectionStatus === 'disconnected') {
+      console.log('[connect] Clearing stale AppKit disconnected state');
+      localStorage.removeItem('@appkit/connection_status');
+      localStorage.removeItem('@appkit/disconnected_connector_ids');
+    }
+  } catch (e) {
+    console.warn('[connect] Failed to clear AppKit localStorage:', e);
+  }
   
   // PRIORITY 1: Try injected provider first (MetaMask browser extension)
   if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
