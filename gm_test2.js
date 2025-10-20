@@ -4,7 +4,7 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '1.9.7';
+const APP_VERSION = '1.9.8';
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
@@ -71,14 +71,14 @@ const NETWORKS = [
 
   // mainnets 
   {
-    name: 'Base Mainnet',
+    name: 'Base',
     chainId: '0x2105',
     contractAddress: '0x99510A8C66Af928635287CE6E3a480cE788c3960',
     rpcUrl: 'https://mainnet.base.org',
     explorer: 'https://basescan.org/',
     buttonColor: '#1a46e5',
     logoUrl: 'img/base.jpg',
-    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
     feeFunction: 'getGmFeeInEth',
   },
     {
@@ -734,6 +734,8 @@ async function switchToNetwork(net) {
   const p = getActiveProvider();
   const params = [{ chainId: net.chainId }];
   const addParams = [{ chainId: net.chainId, chainName: net.name, nativeCurrency: net.nativeCurrency || { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: [net.rpcUrl], blockExplorerUrls: [net.explorer] }];
+  console.log('🔶 [SWITCH] Params:', JSON.stringify(params));
+  console.log('🔶 [SWITCH] AddParams:', JSON.stringify(addParams));
   if (p && typeof p.request === 'function') {
     try { await p.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await p.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('addChain failed', e); } } else { console.warn('provider switch failed', err); } }
   }
