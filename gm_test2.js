@@ -124,10 +124,12 @@ export function initAppKit() {
 function updateNetworkButtonVisibility() {
   if (!networkBtn) return;
   // Show network button only when wallet is connected
-  if (activeEip1193Provider && signer) {
+  if (activeEip1193Provider) {
     networkBtn.style.display = 'inline-block';
+    console.log('[updateNetworkButtonVisibility] Showing network button');
   } else {
     networkBtn.style.display = 'none';
+    console.log('[updateNetworkButtonVisibility] Hiding network button');
   }
 }
 
@@ -1968,6 +1970,7 @@ export function init() {
   
   connectBtn = document.getElementById('connectBtn'); 
   networkBtn = document.getElementById('networkBtn');
+  console.log('[init] networkBtn element:', networkBtn);
   networksRow = document.getElementById('networksRow'); 
   bannerContainer = document.createElement('div'); 
   bannerContainer.style.margin = '12px 0'; 
@@ -2054,6 +2057,7 @@ export function init() {
   
   // Network button - open AppKit network modal
   if (networkBtn) {
+    console.log('[init] Adding click listener to network button');
     networkBtn.addEventListener('click', () => {
       console.log('🌐 [NETWORK BUTTON] Opening AppKit network selector');
       try {
@@ -2068,6 +2072,8 @@ export function init() {
         showBanner('Failed to open network selector', 'danger');
       }
     });
+  } else {
+    console.warn('[init] networkBtn element not found!');
   }
   
   renderNetworkUIOnce(); 
