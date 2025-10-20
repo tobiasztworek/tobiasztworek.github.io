@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import { createAppKit } from '@reown/appkit';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
-import { baseSepolia, optimismSepolia, sepolia } from '@reown/appkit/networks';
+import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
@@ -104,7 +104,7 @@ export function initAppKit() {
     if (modal && typeof modal.open === 'function') return modal;
     modal = createAppKit({
       adapters: [new EthersAdapter()],
-      networks: [baseSepolia, optimismSepolia, sepolia],
+      networks: [base, baseSepolia, celo, optimismSepolia, sepolia],
       metadata,
       projectId,
       features: { connectMethodsOrder: ['wallet'] },
