@@ -377,21 +377,40 @@ function renderNetworkCard(net) {
       statusText.textContent = 'Fetching fee...';
       let feeWei;
       
-      try {
-        const feePromise = contract.getGmFeeInEth();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Fee fetch timeout')), 15000) // 15s timeout (increased)
-        );
-        
-        feeWei = await Promise.race([feePromise, timeoutPromise]);
-        console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
-        statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ETH`;
-        
-      } catch (feeError) {
-        console.error('[TRANSACTION] Fee fetch failed:', feeError.message);
-        statusText.textContent = 'Error: Could not fetch fee';
-        // CRITICAL: Cannot proceed without fee - contract will reject
-        throw new Error('Cannot fetch GM fee. Please check network connection and try again.');
+      // Try up to 2 times with longer timeout
+      let feeAttempts = 0;
+      const maxFeeAttempts = 2;
+      
+      while (feeAttempts < maxFeeAttempts) {
+        try {
+          feeAttempts++;
+          if (feeAttempts > 1) {
+            console.log(`[TRANSACTION] Fee fetch retry ${feeAttempts}/${maxFeeAttempts}...`);
+            statusText.textContent = `Retrying fee fetch (${feeAttempts}/${maxFeeAttempts})...`;
+          }
+          
+          const feePromise = contract.getGmFeeInEth();
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Fee fetch timeout')), 30000) // 30s timeout (doubled)
+          );
+          
+          feeWei = await Promise.race([feePromise, timeoutPromise]);
+          console.log('[TRANSACTION] GM fee:', ethers.formatEther(feeWei), 'ETH');
+          statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ETH`;
+          break; // Success - exit retry loop
+          
+        } catch (feeError) {
+          console.error(`[TRANSACTION] Fee fetch attempt ${feeAttempts} failed:`, feeError.message);
+          
+          if (feeAttempts >= maxFeeAttempts) {
+            // All attempts failed
+            statusText.textContent = 'Error: Could not fetch fee. Please try again.';
+            throw new Error('Cannot fetch GM fee after multiple attempts. If you see "Transaction confirmed" in MetaMask, please close it and try again.');
+          }
+          
+          // Wait 2s before retry
+          await new Promise(r => setTimeout(r, 2000));
+        }
       }
       
       // Get current nonce BEFORE sending transaction
