@@ -4,7 +4,7 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '1.9.6';
+const APP_VERSION = '1.9.7';
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
@@ -74,7 +74,7 @@ const NETWORKS = [
     name: 'Base Mainnet',
     chainId: '0x2105',
     contractAddress: '0x99510A8C66Af928635287CE6E3a480cE788c3960',
-    rpcUrl: 'https://base-rpc.publicnode.com',
+    rpcUrl: 'https://mainnet.base.org',
     explorer: 'https://basescan.org/',
     buttonColor: '#1a46e5',
     logoUrl: 'img/base.jpg',
