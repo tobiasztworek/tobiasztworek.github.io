@@ -4,7 +4,7 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '1.9.5';
+const APP_VERSION = '1.9.6';
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
