@@ -4,7 +4,29 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '1.9.9';
+const APP_VERSION = '2.0.0';
+
+// Debug mode - set to false to disable debug logs
+const DEBUG_MODE = false;
+
+// Debug logger
+function debugLog(...args) {
+  if (DEBUG_MODE) {
+    debugLog(...args);
+  }
+}
+
+function debugWarn(...args) {
+  if (DEBUG_MODE) {
+    debugWarn(...args);
+  }
+}
+
+function debugError(...args) {
+  if (DEBUG_MODE) {
+    console.error(...args);
+  }
+}
 
 // Project config
 const projectId = '3a5538ce9969461166625db3fdcbef8c';
@@ -126,10 +148,10 @@ function updateNetworkButtonVisibility() {
   // Show network button only when wallet is connected
   if (activeEip1193Provider) {
     networkBtn.style.display = 'inline-block';
-    console.log('[updateNetworkButtonVisibility] Showing network button');
+    debugLog('[updateNetworkButtonVisibility] Showing network button');
   } else {
     networkBtn.style.display = 'none';
-    console.log('[updateNetworkButtonVisibility] Hiding network button');
+    debugLog('[updateNetworkButtonVisibility] Hiding network button');
   }
 }
 
@@ -191,7 +213,7 @@ async function isRelayReachable(timeout = 3000) {
 }
 
 function getActiveProvider() {
-  console.log('🔧 [FUNCTION] getActiveProvider() CALLED');
+  debugLog('🔧 [FUNCTION] getActiveProvider() CALLED');
   if (activeEip1193Provider) return activeEip1193Provider;
   try { if (modal && typeof modal.getProvider === 'function') { const p = modal.getProvider(); if (p) return p; } } catch (e) {}
   if (typeof window !== 'undefined' && window.ethereum) return window.ethereum;
@@ -199,7 +221,7 @@ function getActiveProvider() {
 }
 
 function getEthersProvider() {
-  console.log('🔧 [FUNCTION] getEthersProvider() CALLED');
+  debugLog('🔧 [FUNCTION] getEthersProvider() CALLED');
   const p = getActiveProvider();
   if (!p) return null;
   try { 
@@ -214,7 +236,7 @@ function getEthersProvider() {
           return await originalDetectNetwork.call(this);
         } catch (e) {
           // If network detection fails, return a generic network to prevent startup issues
-          console.debug('[ethers] network detection failed, using fallback:', e.message);
+          debugLog('[ethers] network detection failed, using fallback:', e.message);
           return { chainId: 1, name: 'unknown' }; // fallback network
         }
       };
@@ -227,7 +249,7 @@ function getEthersProvider() {
         try {
           return await originalStart.call(this);
         } catch (e) {
-          console.debug('[ethers] provider start failed, continuing anyway:', e.message);
+          debugLog('[ethers] provider start failed, continuing anyway:', e.message);
           // Don't throw - allow the provider to be used even if network detection fails
           this._ready = true;
         }
@@ -258,7 +280,7 @@ async function addNetworkById(chainId) {
     await p.request({ method: 'wallet_addEthereumChain', params: [addParams] });
     return true;
   } catch (e) {
-    console.warn('addNetworkById failed', e);
+    debugWarn('addNetworkById failed', e);
     return false;
   }
 }
@@ -302,13 +324,13 @@ function renderNetworkCard(net) {
     let txSent = false; // Track if transaction was actually sent (needed in finally block)
     
     try {
-      console.log('🔥 [TRANSACTION] Starting GM transaction for', net.name);
+      debugLog('🔥 [TRANSACTION] Starting GM transaction for', net.name);
       
       isTransactionInProgress = true; // Block provider refresh during tx
       sayGmBtn.disabled = true;
       statusText.textContent = 'Preparing transaction...';
       
-      console.log('[TRANSACTION] Switching to network:', net.name, net.chainId);
+      debugLog('[TRANSACTION] Switching to network:', net.name, net.chainId);
       const ok = await switchToNetwork(net);
       if (!ok) { 
         console.error('[TRANSACTION] Failed to switch network');
@@ -318,7 +340,7 @@ function renderNetworkCard(net) {
         return; 
       }
       
-      console.log('[TRANSACTION] Getting provider and signer...');
+      debugLog('[TRANSACTION] Getting provider and signer...');
       const provider = getEthersProvider();
       if (!provider) { 
         console.error('[TRANSACTION] No provider available');
@@ -332,20 +354,20 @@ function renderNetworkCard(net) {
       const contract = new ethers.Contract(net.contractAddress, GM_ABI, s);
       
       // Refresh WalletConnect session before transaction (important for mobile)
-      console.log('[TRANSACTION] Checking provider connection state...');
+      debugLog('[TRANSACTION] Checking provider connection state...');
       const rawProvider = getActiveProvider();
-      console.log('[TRANSACTION] Raw provider:', rawProvider);
-      console.log('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
+      debugLog('[TRANSACTION] Raw provider:', rawProvider);
+      debugLog('[TRANSACTION] Has session?', rawProvider?.session ? 'YES' : 'NO');
       
       // Reset transaction counter if network changed
       if (lastTransactionChainId !== net.chainId) {
-        console.log('[TRANSACTION] Network changed from', lastTransactionChainId, 'to', net.chainId, '- resetting tx counter');
+        debugLog('[TRANSACTION] Network changed from', lastTransactionChainId, 'to', net.chainId, '- resetting tx counter');
         sessionTransactionCount = 0;
         lastTransactionChainId = net.chainId;
         
         // CRITICAL: Add delay after network switch for MetaMask Mobile to clear internal cache
         // This prevents "Document does not have focus" errors and multiple deeplink attempts
-        console.log('[TRANSACTION] Waiting 3s after network switch for wallet to stabilize...');
+        debugLog('[TRANSACTION] Waiting 3s after network switch for wallet to stabilize...');
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
       
@@ -356,32 +378,32 @@ function renderNetworkCard(net) {
       if (rawProvider) {
         // For WalletConnect providers, try to refresh the session
         if (rawProvider.session || rawProvider.client) {
-          console.log('[TRANSACTION] WalletConnect session detected - refreshing...');
+          debugLog('[TRANSACTION] WalletConnect session detected - refreshing...');
           
           // Always try to ensure transport is open (helps with mobile WebSocket issues)
           try {
-            console.log('[TRANSACTION] Ensuring transport is open...');
+            debugLog('[TRANSACTION] Ensuring transport is open...');
             // Try different paths to access relayer
             const client = rawProvider.client;
             const relayer = client?.core?.relayer || client?.relayer;
             
             if (relayer) {
-              console.log('[TRANSACTION] Relayer found, checking connection...');
+              debugLog('[TRANSACTION] Relayer found, checking connection...');
               const isConnected = relayer.connected;
-              console.log('[TRANSACTION] Relayer connected:', isConnected);
+              debugLog('[TRANSACTION] Relayer connected:', isConnected);
               
               // Always try to open transport - it's idempotent if already open
               try {
                 await relayer.transportOpen();
-                console.log('[TRANSACTION] Transport open call completed');
+                debugLog('[TRANSACTION] Transport open call completed');
                 // Wait for connection to stabilize - increased to 3s for consecutive transactions
-                console.log('[TRANSACTION] Waiting 3s for transport to stabilize...');
+                debugLog('[TRANSACTION] Waiting 3s for transport to stabilize...');
                 await new Promise(r => setTimeout(r, 3000));
               } catch (transportError) {
-                console.warn('[TRANSACTION] Transport open failed:', transportError);
+                debugWarn('[TRANSACTION] Transport open failed:', transportError);
               }
             } else {
-              console.warn('[TRANSACTION] Could not find relayer in provider');
+              debugWarn('[TRANSACTION] Could not find relayer in provider');
             }
           } catch (relayerError) {
             console.error('[TRANSACTION] Relayer access error:', relayerError);
@@ -393,25 +415,25 @@ function renderNetworkCard(net) {
             // Multiple opens after network switch are a MetaMask Mobile behavior we must accept
             
             // Ping the session to ensure it's alive
-            console.log('[TRANSACTION] Pinging session...');
+            debugLog('[TRANSACTION] Pinging session...');
             // Only clear pending requests before ping (not responses/results - those are needed)
             if (rawProvider.rpcProviders) {
               Object.values(rawProvider.rpcProviders).forEach(rpc => {
                 if (rpc?.pendingRequest) {
-                  console.log('[TRANSACTION] Clearing pending RPC request...');
+                  debugLog('[TRANSACTION] Clearing pending RPC request...');
                   delete rpc.pendingRequest;
                 }
               });
             }
             const chainId = await rawProvider.request({ method: 'eth_chainId' });
-            console.log('[TRANSACTION] Session ping successful, chainId:', chainId);
+            debugLog('[TRANSACTION] Session ping successful, chainId:', chainId);
           } catch (pingError) {
-            console.warn('[TRANSACTION] Session ping failed, attempting full reconnect:', pingError);
+            debugWarn('[TRANSACTION] Session ping failed, attempting full reconnect:', pingError);
             // Try to reconnect the entire provider
             if (typeof rawProvider.connect === 'function') {
               try {
                 await rawProvider.connect();
-                console.log('[TRANSACTION] Provider reconnected');
+                debugLog('[TRANSACTION] Provider reconnected');
                 await new Promise(r => setTimeout(r, 1000));
               } catch (reconnectError) {
                 console.error('[TRANSACTION] Provider reconnect failed:', reconnectError);
@@ -419,19 +441,19 @@ function renderNetworkCard(net) {
             }
           }
         } else {
-          console.log('[TRANSACTION] Not a WalletConnect provider or no session - skipping refresh');
+          debugLog('[TRANSACTION] Not a WalletConnect provider or no session - skipping refresh');
         }
       }
       
       // Fetch GM fee - quick timeout, non-blocking
-      console.log('[TRANSACTION] Fetching GM fee...');
+      debugLog('[TRANSACTION] Fetching GM fee...');
       statusText.textContent = 'Fetching fee...';
       let feeWei;
       
       // Determine which fee function to use based on network
       const feeFunctionName = net.feeFunction || 'getGmFeeInEth';
       const currencySymbol = net.nativeCurrency?.symbol || 'ETH';
-      console.log(`[TRANSACTION] Using fee function: ${feeFunctionName} for currency: ${currencySymbol}`);
+      debugLog(`[TRANSACTION] Using fee function: ${feeFunctionName} for currency: ${currencySymbol}`);
       
       // Try up to 2 times with longer timeout
       let feeAttempts = 0;
@@ -441,7 +463,7 @@ function renderNetworkCard(net) {
         try {
           feeAttempts++;
           if (feeAttempts > 1) {
-            console.log(`[TRANSACTION] Fee fetch retry ${feeAttempts}/${maxFeeAttempts}...`);
+            debugLog(`[TRANSACTION] Fee fetch retry ${feeAttempts}/${maxFeeAttempts}...`);
             statusText.textContent = `Retrying fee fetch (${feeAttempts}/${maxFeeAttempts})...`;
           }
           
@@ -452,7 +474,7 @@ function renderNetworkCard(net) {
           );
           
           feeWei = await Promise.race([feePromise, timeoutPromise]);
-          console.log(`[TRANSACTION] GM fee: ${ethers.formatEther(feeWei)} ${currencySymbol}`);
+          debugLog(`[TRANSACTION] GM fee: ${ethers.formatEther(feeWei)} ${currencySymbol}`);
           statusText.textContent = `Fee: ${ethers.formatEther(feeWei)} ${currencySymbol}`;
           break; // Success - exit retry loop
           
@@ -473,16 +495,16 @@ function renderNetworkCard(net) {
       // Get current nonce BEFORE sending transaction
       const address = await s.getAddress();
       const startNonce = await provider.getTransactionCount(address, 'latest');
-      console.log('[TRANSACTION] Current nonce before tx:', startNonce);
+      debugLog('[TRANSACTION] Current nonce before tx:', startNonce);
       
-      console.log('[TRANSACTION] Sending GM transaction...');
+      debugLog('[TRANSACTION] Sending GM transaction...');
       statusText.textContent = 'Opening MetaMask...';
       
       let tx; // Will hold transaction object
       
       // Start nonce monitoring in parallel (for MetaMask Mobile quick return bug)
       const nonceMonitor = (async () => {
-        console.log('[TRANSACTION] Starting parallel nonce monitoring...');
+        debugLog('[TRANSACTION] Starting parallel nonce monitoring...');
         // Wait 5s, then update UI to show we're back and waiting
         await new Promise(r => setTimeout(r, 5000));
         statusText.textContent = '✓ Returned from MetaMask - verifying on blockchain...';
@@ -496,17 +518,17 @@ function renderNetworkCard(net) {
             consecutiveFailures = 0; // Reset on success
             
             if (currentNonce > startNonce) {
-              console.log('✅ [TRANSACTION] Nonce increased! Transaction confirmed by nonce monitor');
+              debugLog('✅ [TRANSACTION] Nonce increased! Transaction confirmed by nonce monitor');
               txSent = true;
               return { detected: true, nonce: currentNonce };
             }
           } catch (error) {
             consecutiveFailures++;
-            console.warn(`[TRANSACTION] Nonce check failed (${consecutiveFailures}/${maxConsecutiveFailures}):`, error.message);
+            debugWarn(`[TRANSACTION] Nonce check failed (${consecutiveFailures}/${maxConsecutiveFailures}):`, error.message);
             
             // If too many consecutive failures, wait longer for DNS recovery
             if (consecutiveFailures >= maxConsecutiveFailures) {
-              console.log('[TRANSACTION] Multiple failures - waiting 10s for network recovery...');
+              debugLog('[TRANSACTION] Multiple failures - waiting 10s for network recovery...');
               await new Promise(r => setTimeout(r, 10000));
               consecutiveFailures = 0; // Reset after long wait
               continue;
@@ -524,7 +546,7 @@ function renderNetworkCard(net) {
         const txOptions = { value: feeWei };
         if (net.chainId === '0xaa37dc') { // Optimism Sepolia
           txOptions.gasLimit = 100000; // Explicit gas limit with buffer
-          console.log('[TRANSACTION] Using explicit gas limit for Optimism:', txOptions.gasLimit);
+          debugLog('[TRANSACTION] Using explicit gas limit for Optimism:', txOptions.gasLimit);
         }
         
         const txPromise = contract.sayGM(txOptions);
@@ -534,7 +556,7 @@ function renderNetworkCard(net) {
         const waitInterval = setInterval(() => {
           waitTime += 10;
           statusText.textContent = `⏳ Checking blockchain... (${waitTime}s)`;
-          console.log('[TRANSACTION] Still waiting for wallet response...', waitTime, 's');
+          debugLog('[TRANSACTION] Still waiting for wallet response...', waitTime, 's');
         }, 10000);
         
         const timeoutPromise = new Promise((_, reject) => 
@@ -547,7 +569,7 @@ function renderNetworkCard(net) {
         // Race between tx promise, timeout, and nonce monitor
         const nonceDetectionPromise = nonceMonitor.then(result => {
           if (result.detected) {
-            console.log('[TRANSACTION] Nonce monitor detected tx during send - considering it successful');
+            debugLog('[TRANSACTION] Nonce monitor detected tx during send - considering it successful');
             clearInterval(waitInterval);
             // Return a fake tx object with hash that we'll try to find
             return { 
@@ -563,42 +585,42 @@ function renderNetworkCard(net) {
         
         if (tx.detected) {
           // Transaction was detected by nonce monitor
-          console.log('[TRANSACTION] Transaction detected by nonce monitor!');
+          debugLog('[TRANSACTION] Transaction detected by nonce monitor!');
           txSent = true;
           statusText.textContent = '✅ Transaction confirmed on blockchain!';
           txStatus.textContent = '☀️ GM sent successfully (verified by nonce)';
           return;
         }
         
-        console.log('[TRANSACTION] Transaction sent! Hash:', tx.hash);
+        debugLog('[TRANSACTION] Transaction sent! Hash:', tx.hash);
         txSent = true;
       } catch (txError) {
         console.error('[TRANSACTION] Error sending transaction:', txError);
         
         // Check if user rejected
         if (txError.code === 4001 || txError.code === 'ACTION_REJECTED') {
-          console.log('[TRANSACTION] User rejected transaction');
+          debugLog('[TRANSACTION] User rejected transaction');
           statusText.textContent = 'Transaction rejected';
           return;
         }
         
         // Check if timeout - try to get pending transaction from provider
         if (txError.message === 'TIMEOUT') {
-          console.warn('[TRANSACTION] Timeout waiting for tx response - checking nonce monitor...');
+          debugWarn('[TRANSACTION] Timeout waiting for tx response - checking nonce monitor...');
           
           // Wait for nonce monitor to complete
           const monitorResult = await nonceMonitor;
           
           if (monitorResult.detected) {
-            console.log('✅ [TRANSACTION] Transaction confirmed by nonce monitor!');
+            debugLog('✅ [TRANSACTION] Transaction confirmed by nonce monitor!');
             statusText.textContent = 'GM completed successfully ☀️';
             txStatus.textContent = 'Confirmed (check wallet for tx hash)';
             return;
           }
           
           // Nonce didn't change - transaction likely failed or wasn't sent
-          console.warn('[TRANSACTION] Nonce monitor did not detect transaction');
-          console.warn('[TRANSACTION] Transaction may have failed or not been sent');
+          debugWarn('[TRANSACTION] Nonce monitor did not detect transaction');
+          debugWarn('[TRANSACTION] Transaction may have failed or not been sent');
           statusText.textContent = 'Transaction not detected - check your wallet';
           txStatus.textContent = 'Please check MetaMask history';
           return;
@@ -612,15 +634,15 @@ function renderNetworkCard(net) {
         txStatus.textContent = 'Tx sent: ' + tx.hash;
         statusText.textContent = 'Waiting for confirmation...';
         
-        console.log('[TRANSACTION] Starting receipt polling...');
+        debugLog('[TRANSACTION] Starting receipt polling...');
         // Poll for transaction receipt using provider directly (no wallet interaction needed)
         const checkReceipt = async () => {
           try {
             const receipt = await provider.getTransactionReceipt(tx.hash);
             if (receipt) {
-              console.log('[TRANSACTION] Receipt received! Status:', receipt.status);
+              debugLog('[TRANSACTION] Receipt received! Status:', receipt.status);
               if (receipt.status === 1) {
-                console.log('✅ [TRANSACTION] GM completed successfully!');
+                debugLog('✅ [TRANSACTION] GM completed successfully!');
                 statusText.textContent = 'GM completed successfully ☀️';
                 txStatus.textContent = 'Confirmed: ' + tx.hash;
               } else {
@@ -632,7 +654,7 @@ function renderNetworkCard(net) {
             }
             return false;
           } catch (e) {
-            console.debug('[TRANSACTION] Receipt check error:', e);
+            debugLog('[TRANSACTION] Receipt check error:', e);
             return false;
           }
         };
@@ -646,7 +668,7 @@ function renderNetworkCard(net) {
           while (attempts < maxAttempts && pollingActive) {
             // Check if transaction was confirmed
             if (txSent) {
-              console.log('[TRANSACTION] Transaction confirmed by other method - stopping receipt polling');
+              debugLog('[TRANSACTION] Transaction confirmed by other method - stopping receipt polling');
               return true;
             }
             
@@ -660,7 +682,7 @@ function renderNetworkCard(net) {
             attempts++;
             // Update status to show we're still checking
             if (attempts % 5 === 0) {
-              console.log('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
+              debugLog('[TRANSACTION] Still waiting for confirmation...', attempts * 2, 'seconds elapsed');
               statusText.textContent = `Waiting for confirmation... (${attempts * 2}s)`;
             }
           }
@@ -673,7 +695,7 @@ function renderNetworkCard(net) {
           nonceMonitor.then(result => {
             if (result.detected) {
               pollingActive = false; // Stop receipt polling
-              console.log('[TRANSACTION] Nonce monitor won the race!');
+              debugLog('[TRANSACTION] Nonce monitor won the race!');
               statusText.textContent = 'GM completed successfully ☀️';
               txStatus.textContent = 'Confirmed: ' + tx.hash;
               return true;
@@ -683,7 +705,7 @@ function renderNetworkCard(net) {
         ]);
         
         if (!receiptFound) {
-          console.warn('⏱️ [TRANSACTION] Timeout waiting for confirmation');
+          debugWarn('⏱️ [TRANSACTION] Timeout waiting for confirmation');
           statusText.textContent = 'Check your wallet for transaction status';
           txStatus.textContent = 'Pending: ' + tx.hash;
         }
@@ -693,29 +715,29 @@ function renderNetworkCard(net) {
       console.error('❌ [TRANSACTION] Error:', e);
       statusText.textContent = 'Error in transaction';
     } finally {
-      console.log('🔥 [TRANSACTION] Transaction flow completed, clearing flags');
+      debugLog('🔥 [TRANSACTION] Transaction flow completed, clearing flags');
       
       // Increment transaction counter ONLY if transaction was actually sent
       if (txSent) {
         sessionTransactionCount++;
-        console.log('[TRANSACTION] Transaction sent successfully - session tx count:', sessionTransactionCount);
+        debugLog('[TRANSACTION] Transaction sent successfully - session tx count:', sessionTransactionCount);
         
         // CRITICAL: Try to force MetaMask Mobile to close "Transaction complete" screen
         // This prevents the cached screen from showing on next transaction
         try {
           const rawProvider = getActiveProvider();
           if (rawProvider?.session) {
-            console.log('[TRANSACTION] POST-TX: Requesting session update to force UI refresh...');
+            debugLog('[TRANSACTION] POST-TX: Requesting session update to force UI refresh...');
             // Ping session to force MetaMask to update its UI state
             await rawProvider.request({ method: 'eth_chainId' });
             // Small delay to let MetaMask process
             await new Promise(r => setTimeout(r, 500));
           }
         } catch (refreshError) {
-          console.warn('[TRANSACTION] Post-tx session refresh failed:', refreshError);
+          debugWarn('[TRANSACTION] Post-tx session refresh failed:', refreshError);
         }
       } else {
-        console.log('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
+        debugLog('[TRANSACTION] Transaction failed/rejected - NOT incrementing tx count. Count remains:', sessionTransactionCount);
       }
       
       // NOTE: We do NOT clear any cache after transaction.
@@ -730,43 +752,43 @@ function renderNetworkCard(net) {
 
 // ----- network switching -----
 async function switchToNetwork(net) {
-  console.log('🔶 [FUNCTION] switchToNetwork() STARTED for', net.name);
+  debugLog('🔶 [FUNCTION] switchToNetwork() STARTED for', net.name);
   const p = getActiveProvider();
   const params = [{ chainId: net.chainId }];
   const addParams = [{ chainId: net.chainId, chainName: net.name, nativeCurrency: net.nativeCurrency || { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: [net.rpcUrl], blockExplorerUrls: [net.explorer] }];
-  console.log('🔶 [SWITCH] Params:', JSON.stringify(params));
-  console.log('🔶 [SWITCH] AddParams:', JSON.stringify(addParams));
+  debugLog('🔶 [SWITCH] Params:', JSON.stringify(params));
+  debugLog('🔶 [SWITCH] AddParams:', JSON.stringify(addParams));
   if (p && typeof p.request === 'function') {
-    try { await p.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await p.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('addChain failed', e); } } else { console.warn('provider switch failed', err); } }
+    try { await p.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await p.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { debugWarn('addChain failed', e); } } else { debugWarn('provider switch failed', err); } }
   }
   if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
-    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { console.warn('window addChain failed', e); } } else { console.warn('window switch failed', err); } }
+    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { debugWarn('window addChain failed', e); } } else { debugWarn('window switch failed', err); } }
   }
   showBanner('No wallet provider available for network switch. Connect a wallet or switch the network manually in your wallet.', 'warning', [ { label: 'Connect', onClick: () => connect() } ]);
-  console.log('🔶 [FUNCTION] switchToNetwork() COMPLETED - FAILED');
+  debugLog('🔶 [FUNCTION] switchToNetwork() COMPLETED - FAILED');
   return false;
 }
 
 // ----- connect / restore -----
 async function connect() {
-  console.log('🔵 [FUNCTION] connect() STARTED');
+  debugLog('🔵 [FUNCTION] connect() STARTED');
   userInitiatedConnection = true; // Mark this as user-initiated
   
   // Clear stale AppKit localStorage if marked as disconnected
   try {
     const connectionStatus = localStorage.getItem('@appkit/connection_status');
     if (connectionStatus === 'disconnected') {
-      console.log('[connect] Clearing stale AppKit disconnected state');
+      debugLog('[connect] Clearing stale AppKit disconnected state');
       localStorage.removeItem('@appkit/connection_status');
       localStorage.removeItem('@appkit/disconnected_connector_ids');
     }
   } catch (e) {
-    console.warn('[connect] Failed to clear AppKit localStorage:', e);
+    debugWarn('[connect] Failed to clear AppKit localStorage:', e);
   }
   
   // PRIORITY 1: Try injected provider first (MetaMask browser extension)
   if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
-    console.log('[connect] Injected provider detected - using browser wallet');
+    debugLog('[connect] Injected provider detected - using browser wallet');
     try {
       await window.ethereum.request({ method: 'eth_requestAccounts' });
       activeEip1193Provider = window.ethereum;
@@ -774,9 +796,9 @@ async function connect() {
       // Attach event listeners to injected provider
       try {
         attachProviderEventListeners(window.ethereum);
-        console.log('[connect] Event listeners attached to injected provider');
+        debugLog('[connect] Event listeners attached to injected provider');
       } catch (e) {
-        console.warn('[connect] Failed to attach listeners:', e);
+        debugWarn('[connect] Failed to attach listeners:', e);
       }
       
       const provider = getEthersProvider();
@@ -789,16 +811,16 @@ async function connect() {
         
         // Reset broken session counters on successful connection
         if (brokenSessionCount > 0) {
-          console.log('[connect] Successful connection - resetting broken session counters');
+          debugLog('[connect] Successful connection - resetting broken session counters');
           brokenSessionCount = 0;
           brokenSessionCooldownActive = false;
         }
         
-        console.log('🔵 [FUNCTION] connect() COMPLETED - INJECTED PROVIDER');
+        debugLog('🔵 [FUNCTION] connect() COMPLETED - INJECTED PROVIDER');
         return;
       }
     } catch (injectedError) {
-      console.warn('[connect] Injected provider failed:', injectedError);
+      debugWarn('[connect] Injected provider failed:', injectedError);
       
       // Check if user rejected the request
       const isUserRejection = injectedError?.code === 4001 || 
@@ -806,19 +828,19 @@ async function connect() {
                               injectedError?.message?.includes('User denied');
       
       if (isUserRejection) {
-        console.log('[connect] User rejected wallet connection');
+        debugLog('[connect] User rejected wallet connection');
         showBanner('Connection cancelled by user', 'info');
-        console.log('🔵 [FUNCTION] connect() COMPLETED - USER REJECTED');
+        debugLog('🔵 [FUNCTION] connect() COMPLETED - USER REJECTED');
         return; // ✅ EXIT - nie próbuj AppKit modal
       }
       
       // Only continue to fallback if it's not a user rejection
-      console.log('[connect] Injected failed (not user rejection) - will try AppKit modal fallback');
+      debugLog('[connect] Injected failed (not user rejection) - will try AppKit modal fallback');
     }
   }
   
   // PRIORITY 2: Fallback to WalletConnect/AppKit modal
-  console.log('[connect] No injected provider or injected failed - trying AppKit modal...');
+  debugLog('[connect] No injected provider or injected failed - trying AppKit modal...');
   
   const relayOk = await isRelayReachable().catch(() => false);
   if (!relayOk) {
@@ -850,7 +872,7 @@ async function connect() {
         const finalized = await finalizeModalProvider(providerCandidate).catch(() => false);
         if (!finalized) {
           // show reconnect banner only if the provider turned out unusable
-          showBanner('Connected wallet appears unusable. Reconnect to refresh WalletConnect session.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          showBanner('Connected wallet appears unusable. Reconnect to refresh WalletConnect session.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { debugWarn(e); } } } ]);
           // clear optimistic provider so other fallbacks can be attempted later
           activeEip1193Provider = null;
           connectBtn.textContent = 'Connect';
@@ -858,14 +880,14 @@ async function connect() {
           try { signer = (await getEthersProvider())?.getSigner(); } catch (e) { console.debug('post-finalize update failed', e); }
         }
       })();
-    } catch (e) { console.warn('providerCandidate probe failed', e); }
+    } catch (e) { debugWarn('providerCandidate probe failed', e); }
   } else {
     // If modal.getProvider() returns null but modal exists, try to force refresh provider
-    console.log('[connect] modal.getProvider() returned null, attempting forceRefreshProvider...');
+    debugLog('[connect] modal.getProvider() returned null, attempting forceRefreshProvider...');
     if (modal && typeof forceRefreshProvider === 'function' && !forceRefreshInProgress) {
       const refreshSuccess = await forceRefreshProvider(true).catch(() => false); // User-initiated
       if (refreshSuccess) {
-        console.log('[connect] forceRefreshProvider succeeded - provider should be available now');
+        debugLog('[connect] forceRefreshProvider succeeded - provider should be available now');
         lastSuccessfulConnection = Date.now();
         return; // forceRefreshProvider handles UI updates
       }
@@ -879,13 +901,13 @@ async function connect() {
       try {
         const p2 = modal && typeof modal.getProvider === 'function' ? modal.getProvider() : null;
         if (p2) {
-          console.log('[connect probe] modal.getProvider() is now available', p2);
-          try { console.log('[connect probe] provider keys ->', Object.keys(p2)); } catch (e) {}
+          debugLog('[connect probe] modal.getProvider() is now available', p2);
+          try { debugLog('[connect probe] provider keys ->', Object.keys(p2)); } catch (e) {}
           try { attachProviderEventListeners(p2); } catch (e) {}
           clearInterval(pid2);
         } else if (probeCount2 === 10 && modal && !activeEip1193Provider) {
           // After 4 seconds (10 * 400ms), if still no provider, try forceRefresh
-          console.log('[connect probe] still no provider after 4s, trying forceRefreshProvider...');
+          debugLog('[connect probe] still no provider after 4s, trying forceRefreshProvider...');
           const refreshSuccess = await forceRefreshProvider(true).catch(() => false); // User-initiated
           if (refreshSuccess) {
             clearInterval(pid2);
@@ -901,17 +923,17 @@ async function connect() {
     if (!injectedFound) { 
       // Don't show banner - modal is already open and user is connecting
       // Just wait for WalletConnect to complete
-      console.log('[connect] No injected provider found, waiting for modal/WalletConnect...');
+      debugLog('[connect] No injected provider found, waiting for modal/WalletConnect...');
       return; 
     }
-    try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { console.warn('eth_requestAccounts failed', e); }
+    try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; } catch (e) { debugWarn('eth_requestAccounts failed', e); }
   }
-  const provider = getEthersProvider(); if (!provider) { console.warn('No provider available at finalization'); return; }
+  const provider = getEthersProvider(); if (!provider) { debugWarn('No provider available at finalization'); return; }
   signer = await provider.getSigner(); connectBtn.textContent = 'Disconnect'; updateNetworkButtonVisibility(); clearBanner(); renderNetworkUIOnce();
   
   // Reset broken session counters on successful connection
   if (brokenSessionCount > 0) {
-    console.log('[connect] Successful connection - resetting broken session counters');
+    debugLog('[connect] Successful connection - resetting broken session counters');
     brokenSessionCount = 0;
     brokenSessionCooldownActive = false;
   }
@@ -919,7 +941,7 @@ async function connect() {
   // Reset user-initiated flag after successful connection
   userInitiatedConnection = false;
   
-  console.log('🔵 [FUNCTION] connect() COMPLETED');
+  debugLog('🔵 [FUNCTION] connect() COMPLETED');
 }
 
 // Attempt to finalize a modal-provided provider: check eth_accounts, wait for readiness,
@@ -933,7 +955,7 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
       try {
         const msg = err && (err.message || String(err)) || '';
         if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
-          showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { debugWarn(e); } } } ]);
         }
       } catch (e) {}
       return null;
@@ -949,7 +971,7 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
         try {
           const msg = err && (err.message || String(err)) || '';
           if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
-            showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+            showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { debugWarn(e); } } } ]);
           }
         } catch (e) {}
         return null;
@@ -966,7 +988,7 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
         try {
           const msg = err && (err.message || String(err)) || '';
           if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
-            showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+            showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { debugWarn(e); } } } ]);
           }
         } catch (e) {}
         return null;
@@ -976,13 +998,13 @@ async function finalizeModalProvider(p, opts = { timeout: 15000 }) {
       // user may need to confirm in external app — return false so we can retry later
       const msg = e && (e.message || String(e)) || '';
       if (msg.includes('No matching key') || msg.includes("session topic doesn't exist")) {
-        showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (ee) { console.warn(ee); } } } ]);
+        showBanner('WalletConnect session expired — reconnect to continue.', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (ee) { debugWarn(ee); } } } ]);
       }
       try { clearBanner(); } catch (ee) {}
       return false;
     }
   } catch (e) {
-    console.debug('finalizeModalProvider error', e);
+    debugLog('finalizeModalProvider error', e);
     return false;
   }
   return false;
@@ -1034,22 +1056,22 @@ function attachProviderEventListeners(p) {
       } catch (e) { console.debug('attach event failed', evName, e); }
     };
     safeOn('disconnect', (info) => {
-      console.warn('Provider disconnect event', info);
+      debugWarn('Provider disconnect event', info);
       handleModalDisconnection();
     });
     safeOn('accountsChanged', async (accounts) => {
-      console.log('🔥 [EVENT] accountsChanged TRIGGERED with accounts:', accounts);
+      debugLog('🔥 [EVENT] accountsChanged TRIGGERED with accounts:', accounts);
       try {
         // Check if user has manually disconnected - respect their choice
         const connectionStatus = localStorage.getItem('@appkit/connection_status');
         if (connectionStatus === 'disconnected') {
-          console.log('[accountsChanged] User manually disconnected - ignoring event');
+          debugLog('[accountsChanged] User manually disconnected - ignoring event');
           return;
         }
         
         if (!accounts || !accounts.length) {
           activeEip1193Provider = null;
-          showBanner('Wallet accounts cleared. Reconnect?', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } } ]);
+          showBanner('Wallet accounts cleared. Reconnect?', 'warning', [ { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { debugWarn(e); } } } ]);
           return;
         }
         // update signer and stats
@@ -1057,13 +1079,13 @@ function attachProviderEventListeners(p) {
       } catch (e) { console.debug('accountsChanged handler failed', e); }
     });
     safeOn('chainChanged', async (chainId) => {
-      console.log('🔥 [EVENT] chainChanged TRIGGERED with chainId:', chainId);
+      debugLog('🔥 [EVENT] chainChanged TRIGGERED with chainId:', chainId);
       // Circuit breaker: prevent infinite loops
       const now = Date.now();
       if (now - lastChainChangeTime < 1000) {
         chainChangedCount++;
         if (chainChangedCount > 10) {
-          console.warn('chainChanged circuit breaker triggered - too many events in short time');
+          debugWarn('chainChanged circuit breaker triggered - too many events in short time');
           return;
         }
       } else {
@@ -1071,7 +1093,7 @@ function attachProviderEventListeners(p) {
       }
       lastChainChangeTime = now;
       
-      console.debug('chainChanged to', chainId, 'count:', chainChangedCount);
+      debugLog('chainChanged to', chainId, 'count:', chainChangedCount);
       
       // ...existing code...
       
@@ -1091,28 +1113,28 @@ function attachProviderEventListeners(p) {
 
 // User-initiated disconnect
 async function disconnect() {
-  console.log('❌ [FUNCTION] disconnect() CALLED');
+  debugLog('❌ [FUNCTION] disconnect() CALLED');
   
   // Reset transaction counter on disconnect
   sessionTransactionCount = 0;
-  console.log('[disconnect] Reset session transaction counter');
+  debugLog('[disconnect] Reset session transaction counter');
   
   try {
     // Check if using injected provider
     const isInjected = activeEip1193Provider === window.ethereum;
     
     if (isInjected) {
-      console.log('[disconnect] Disconnecting injected provider (browser wallet)');
+      debugLog('[disconnect] Disconnecting injected provider (browser wallet)');
       // For injected providers, we can't programmatically disconnect them
       // We just clear our local state and set localStorage flag
       localStorage.setItem('@appkit/connection_status', 'disconnected');
     } else if (modal) {
       // For modal/WalletConnect, properly disconnect through AppKit
-      console.log('[disconnect] Disconnecting modal/WalletConnect provider');
+      debugLog('[disconnect] Disconnecting modal/WalletConnect provider');
       try {
         if (typeof modal.disconnect === 'function') {
           await modal.disconnect();
-          console.log('[disconnect] Modal disconnect succeeded');
+          debugLog('[disconnect] Modal disconnect succeeded');
         }
         
         // Clear WalletConnect session data to prevent reusing expired sessions
@@ -1125,21 +1147,21 @@ async function disconnect() {
           wcKeys.forEach(key => {
             try {
               localStorage.removeItem(key);
-              console.log('[disconnect] Cleared WalletConnect key:', key);
+              debugLog('[disconnect] Cleared WalletConnect key:', key);
             } catch (e) {}
           });
         } catch (e) {
-          console.warn('[disconnect] Failed to clear WalletConnect keys:', e);
+          debugWarn('[disconnect] Failed to clear WalletConnect keys:', e);
         }
       } catch (e) {
-        console.warn('[disconnect] Modal disconnect failed:', e);
+        debugWarn('[disconnect] Modal disconnect failed:', e);
       }
     }
     
     // Clear local state regardless of provider type
     handleModalDisconnection();
     
-    console.log('❌ [FUNCTION] disconnect() COMPLETED');
+    debugLog('❌ [FUNCTION] disconnect() COMPLETED');
   } catch (error) {
     console.error('[disconnect] Error during disconnect:', error);
   }
@@ -1147,8 +1169,8 @@ async function disconnect() {
 
 // Handle disconnection detected from modal state
 function handleModalDisconnection() {
-  console.log('❌ [FUNCTION] handleModalDisconnection() CALLED');
-  console.log('[disconnect] Handling modal disconnection...');
+  debugLog('❌ [FUNCTION] handleModalDisconnection() CALLED');
+  debugLog('[disconnect] Handling modal disconnection...');
   
   // Clear active provider and signer
   activeEip1193Provider = null;
@@ -1166,7 +1188,7 @@ function handleModalDisconnection() {
   // Show disconnection message
   showBanner('Wallet disconnected. Click "Connect Wallet" to reconnect.', 'info');
   
-  console.log('[disconnect] Application state reset to disconnected');
+  debugLog('[disconnect] Application state reset to disconnected');
 }
 
 // Global lock to prevent multiple concurrent forceRefreshProvider calls
@@ -1182,11 +1204,11 @@ const EXTENDED_COOLDOWN_MS = 120000; // 2 minutes extended cooldown
 
 // Force refresh provider from modal (useful when modal shows connected but getProvider() returns undefined)
 async function forceRefreshProvider(userInitiated = false) {
-  console.log('🟠 [FUNCTION] forceRefreshProvider() STARTED');
+  debugLog('🟠 [FUNCTION] forceRefreshProvider() STARTED');
   
   // Don't refresh provider during transaction
   if (isTransactionInProgress && !userInitiated) {
-    console.log('[forceRefresh] Transaction in progress - skipping refresh');
+    debugLog('[forceRefresh] Transaction in progress - skipping refresh');
     return false;
   }
   
@@ -1197,7 +1219,7 @@ async function forceRefreshProvider(userInitiated = false) {
     const cooldownTime = brokenSessionCount >= MAX_BROKEN_SESSION_ATTEMPTS ? EXTENDED_COOLDOWN_MS : BROKEN_SESSION_COOLDOWN_MS;
     
     if (timeSinceLastBroken < cooldownTime) {
-      console.warn('[forceRefresh] In broken session cooldown period - skipping automatic refresh');
+      debugWarn('[forceRefresh] In broken session cooldown period - skipping automatic refresh');
       const remainingTime = Math.ceil((cooldownTime - timeSinceLastBroken) / 1000);
       if (userInitiated) {
         showBanner(`WalletConnect session issues detected - please wait ${remainingTime}s before reconnecting`, 'info');
@@ -1207,20 +1229,20 @@ async function forceRefreshProvider(userInitiated = false) {
       // Cooldown expired, reset counters
       brokenSessionCooldownActive = false;
       brokenSessionCount = 0;
-      console.log('[forceRefresh] Cooldown expired - resetting broken session counters');
+      debugLog('[forceRefresh] Cooldown expired - resetting broken session counters');
     }
   }
   
   // Prevent multiple concurrent calls
   if (forceRefreshInProgress) {
-    console.log('[forceRefresh] already in progress - skipping duplicate call');
+    debugLog('[forceRefresh] already in progress - skipping duplicate call');
     return false;
   }
   
   forceRefreshInProgress = true;
   try {
-    console.log('[forceRefresh] attempting to extract provider from connected modal...');
-    if (!modal) { console.warn('no modal available'); return false; }
+    debugLog('[forceRefresh] attempting to extract provider from connected modal...');
+    if (!modal) { debugWarn('no modal available'); return false; }
     
     // FIRST: Check if modal actually shows connected state
     let isModalConnected = false;
@@ -1233,25 +1255,25 @@ async function forceRefreshProvider(userInitiated = false) {
       isModalConnected = connectionDetails.isConnectedState || 
                         (connectionDetails.caipAddress && connectionDetails.caipAddress !== undefined);
       
-      console.log('[forceRefresh] modal connection check:', {
+      debugLog('[forceRefresh] modal connection check:', {
         isConnectedState: connectionDetails.isConnectedState,
         caipAddress: connectionDetails.caipAddress,
         connectionState: connectionDetails.connectionState,
         modalConnected: isModalConnected
       });
     } catch (e) {
-      console.debug('[forceRefresh] connection state check failed', e);
+      debugLog('[forceRefresh] connection state check failed', e);
     }
     
     // If modal doesn't show connected state, don't try to extract provider
     if (!isModalConnected) {
-      console.log('[forceRefresh] modal is not in connected state - checking for desync issues...');
+      debugLog('[forceRefresh] modal is not in connected state - checking for desync issues...');
       
       // Enhanced diagnostics for AppKit desync issues
       try {
-        console.log('[forceRefresh] modal object available:', !!modal);
+        debugLog('[forceRefresh] modal object available:', !!modal);
         if (modal) {
-          console.log('[forceRefresh] modal methods available:', {
+          debugLog('[forceRefresh] modal methods available:', {
             getProvider: typeof modal.getProvider,
             getIsConnectedState: typeof modal.getIsConnectedState,
             getCaipAddress: typeof modal.getCaipAddress
@@ -1259,7 +1281,7 @@ async function forceRefreshProvider(userInitiated = false) {
           
           // Check for any internal state that might indicate connection
           const modalKeys = Object.keys(modal).slice(0, 20); // First 20 keys to avoid spam
-          console.log('[forceRefresh] modal keys sample:', modalKeys);
+          debugLog('[forceRefresh] modal keys sample:', modalKeys);
         }
         
         // Check localStorage for AppKit connection data
@@ -1267,27 +1289,27 @@ async function forceRefreshProvider(userInitiated = false) {
           const appkitKeys = Object.keys(localStorage).filter(key => 
             key.includes('appkit') || key.includes('walletconnect') || key.includes('reown')
           );
-          console.log('[forceRefresh] localStorage AppKit keys:', appkitKeys);
+          debugLog('[forceRefresh] localStorage AppKit keys:', appkitKeys);
           
           // Check specific keys that might indicate connection
           appkitKeys.forEach(key => {
             try {
               const value = localStorage.getItem(key);
               if (value && value.length < 500) { // Only log short values to avoid spam
-                console.log(`[forceRefresh] localStorage[${key}]:`, value);
+                debugLog(`[forceRefresh] localStorage[${key}]:`, value);
               } else if (value) {
-                console.log(`[forceRefresh] localStorage[${key}]: [large data ${value.length} chars]`);
+                debugLog(`[forceRefresh] localStorage[${key}]: [large data ${value.length} chars]`);
               }
             } catch (e) {
-              console.debug(`[forceRefresh] failed to read localStorage[${key}]:`, e);
+              debugLog(`[forceRefresh] failed to read localStorage[${key}]:`, e);
             }
           });
         }
       } catch (e) {
-        console.debug('[forceRefresh] desync diagnostics failed:', e);
+        debugLog('[forceRefresh] desync diagnostics failed:', e);
       }
       
-      console.log('[forceRefresh] modal is not in connected state - skipping provider extraction');
+      debugLog('[forceRefresh] modal is not in connected state - skipping provider extraction');
       return false;
     }
     
@@ -1297,19 +1319,19 @@ async function forceRefreshProvider(userInitiated = false) {
     // method 1: standard getProvider()
     try { 
       provider = modal.getProvider && modal.getProvider(); 
-      console.log('[forceRefresh] modal.getProvider() result:', provider);
+      debugLog('[forceRefresh] modal.getProvider() result:', provider);
     } catch (e) { console.debug('modal.getProvider failed', e); }
     
     // method 2: try accessing EthersAdapter directly from modal.adapters
     if (!provider) {
       try {
         const adapters = modal.adapters || [];
-        console.log('[forceRefresh] checking adapters:', adapters.length);
+        debugLog('[forceRefresh] checking adapters:', adapters.length);
         for (const adapter of adapters) {
-          console.log('[forceRefresh] adapter:', adapter?.constructor?.name);
+          debugLog('[forceRefresh] adapter:', adapter?.constructor?.name);
           if (adapter && typeof adapter.getProvider === 'function') {
             const p = adapter.getProvider();
-            console.log('[forceRefresh] adapter.getProvider() result:', p);
+            debugLog('[forceRefresh] adapter.getProvider() result:', p);
             if (p) { provider = p; break; }
           }
         }
@@ -1322,10 +1344,10 @@ async function forceRefreshProvider(userInitiated = false) {
         // AppKit may store provider in internal state
         if (modal._internal?.provider) {
           provider = modal._internal.provider;
-          console.log('[forceRefresh] found _internal.provider:', provider);
+          debugLog('[forceRefresh] found _internal.provider:', provider);
         } else if (modal.state?.provider) {
           provider = modal.state.provider;
-          console.log('[forceRefresh] found state.provider:', provider);
+          debugLog('[forceRefresh] found state.provider:', provider);
         }
       } catch (e) { console.debug('internal state access failed', e); }
     }
@@ -1335,12 +1357,12 @@ async function forceRefreshProvider(userInitiated = false) {
       try {
         // look for any EIP-1193 compatible objects in modal
         const keys = Object.keys(modal || {});
-        console.log('[forceRefresh] modal keys:', keys);
+        debugLog('[forceRefresh] modal keys:', keys);
         for (const key of keys) {
           try {
             const obj = modal[key];
             if (obj && typeof obj.request === 'function') {
-              console.log('[forceRefresh] found potential provider at modal.' + key + ':', obj);
+              debugLog('[forceRefresh] found potential provider at modal.' + key + ':', obj);
               provider = obj;
               break;
             }
@@ -1349,7 +1371,7 @@ async function forceRefreshProvider(userInitiated = false) {
       } catch (e) { console.debug('manual provider search failed', e); }
     }
     
-    console.log('[forceRefresh] final extracted provider:', provider);
+    debugLog('[forceRefresh] final extracted provider:', provider);
     if (provider && typeof provider.request === 'function') {
       // For WalletConnect providers, try to enable/connect them first
       let isWalletConnect = false;
@@ -1358,10 +1380,10 @@ async function forceRefreshProvider(userInitiated = false) {
                          provider.session || 
                          provider.client || 
                          JSON.stringify(provider).includes('walletconnect');
-        console.log('[forceRefresh] isWalletConnect detection:', isWalletConnect);
+        debugLog('[forceRefresh] isWalletConnect detection:', isWalletConnect);
         
         // Detailed session diagnostics
-        console.log('[forceRefresh] provider session state:', {
+        debugLog('[forceRefresh] provider session state:', {
           hasSession: !!provider.session,
           sessionValue: provider.session,
           hasClient: !!provider.client,
@@ -1371,38 +1393,38 @@ async function forceRefreshProvider(userInitiated = false) {
           chainId: provider.chainId
         });
       } catch (e) { 
-        console.debug('[forceRefresh] WalletConnect detection failed', e); 
+        debugLog('[forceRefresh] WalletConnect detection failed', e); 
       }
       
       // If this is a WalletConnect provider that needs enabling
       if (isWalletConnect) {
         try {
-          console.log('[forceRefresh] attempting to enable WalletConnect provider...');
+          debugLog('[forceRefresh] attempting to enable WalletConnect provider...');
           
           // Try to activate WalletConnect session through different methods
-          console.log('[forceRefresh] attempting to activate WalletConnect session...');
+          debugLog('[forceRefresh] attempting to activate WalletConnect session...');
           
           // Method 1: Check if provider has session but is not connected
           if (provider.session && !provider.connected) {
-            console.log('[forceRefresh] found session but provider not connected, trying to reconnect...');
+            debugLog('[forceRefresh] found session but provider not connected, trying to reconnect...');
             try {
               if (typeof provider.connect === 'function') {
                 await provider.connect();
-                console.log('[forceRefresh] provider.connect() succeeded');
+                debugLog('[forceRefresh] provider.connect() succeeded');
               }
             } catch (e) {
-              console.warn('[forceRefresh] provider.connect() failed:', e);
+              debugWarn('[forceRefresh] provider.connect() failed:', e);
             }
           }
           
           // Method 2: If no session, try limited restore (with timeout to prevent hanging)
           if (!provider.session && provider.client) {
-            console.log('[forceRefresh] no session found - attempting quick restore from AppKit data...');
+            debugLog('[forceRefresh] no session found - attempting quick restore from AppKit data...');
             
             try {
               // Get connection info from AppKit modal
               const caipAddress = modal?.getCaipAddress?.();
-              console.log('[forceRefresh] AppKit caipAddress for session restore:', caipAddress);
+              debugLog('[forceRefresh] AppKit caipAddress for session restore:', caipAddress);
               
               if (caipAddress) {
                 // Extract chain and address from CAIP format (eip155:84532:0x...)
@@ -1410,10 +1432,10 @@ async function forceRefreshProvider(userInitiated = false) {
                 if (parts.length === 3) {
                   const chainId = parseInt(parts[1]);
                   const address = parts[2];
-                  console.log('[forceRefresh] extracted chain:', chainId, 'address:', address);
+                  debugLog('[forceRefresh] extracted chain:', chainId, 'address:', address);
                   
                   // Try quick activation with timeout to prevent hanging
-                  console.log('[forceRefresh] attempting quick provider activation...');
+                  debugLog('[forceRefresh] attempting quick provider activation...');
                   
                   try {
                     // Wrap activation attempts in timeout promise
@@ -1422,18 +1444,18 @@ async function forceRefreshProvider(userInitiated = false) {
                         // Method A: Try enable with specific parameters
                         if (typeof provider.enable === 'function') {
                           const enableResult = await provider.enable();
-                          console.log('[forceRefresh] provider.enable() result:', enableResult);
+                          debugLog('[forceRefresh] provider.enable() result:', enableResult);
                         }
                         
                         // Method B: Try connect with chain info
                         if (typeof provider.connect === 'function') {
                           const connectResult = await provider.connect({ chainId });
-                          console.log('[forceRefresh] provider.connect() result:', connectResult);
+                          debugLog('[forceRefresh] provider.connect() result:', connectResult);
                         }
                         
                         // Method C: Check if session appeared after these calls
                         await new Promise(resolve => setTimeout(resolve, 500));
-                        console.log('[forceRefresh] session state after activation attempts:', !!provider.session);
+                        debugLog('[forceRefresh] session state after activation attempts:', !!provider.session);
                       })(),
                       // Timeout after 3 seconds to prevent hanging
                       new Promise((_, reject) => 
@@ -1441,28 +1463,28 @@ async function forceRefreshProvider(userInitiated = false) {
                       )
                     ]);
                   } catch (timeoutError) {
-                    console.warn('[forceRefresh] provider activation timed out or failed:', timeoutError.message);
+                    debugWarn('[forceRefresh] provider activation timed out or failed:', timeoutError.message);
                   }
                 }
               }
               
             } catch (restoreError) {
-              console.warn('[forceRefresh] session restore attempt failed:', restoreError);
+              debugWarn('[forceRefresh] session restore attempt failed:', restoreError);
             }
             
             // Fallback: wait briefly for session to appear (but don't wait too long)
             if (!provider.session) {
-              console.log('[forceRefresh] still no session - waiting briefly for initialization...');
+              debugLog('[forceRefresh] still no session - waiting briefly for initialization...');
               let waitAttempts = 0;
               while (!provider.session && waitAttempts < 2) { // Reduced from 3 to 2 attempts
                 await new Promise(resolve => setTimeout(resolve, 800)); // Reduced from 1500ms to 800ms
                 waitAttempts++;
-                console.log(`[forceRefresh] session wait attempt ${waitAttempts}/2, session:`, !!provider.session);
+                debugLog(`[forceRefresh] session wait attempt ${waitAttempts}/2, session:`, !!provider.session);
               }
               
               // If still no session, accept provider anyway - it might work for some operations
               if (!provider.session) {
-                console.log('[forceRefresh] no session after waiting - continuing anyway as provider might still work');
+                debugLog('[forceRefresh] no session after waiting - continuing anyway as provider might still work');
               }
             }
           }
@@ -1473,14 +1495,14 @@ async function forceRefreshProvider(userInitiated = false) {
               (async () => {
                 if (typeof provider.enable === 'function') {
                   await provider.enable();
-                  console.log('[forceRefresh] provider.enable() succeeded');
+                  debugLog('[forceRefresh] provider.enable() succeeded');
                 } else if (typeof provider.connect === 'function') {
                   await provider.connect();
-                  console.log('[forceRefresh] provider.connect() succeeded');
+                  debugLog('[forceRefresh] provider.connect() succeeded');
                 } else {
-                  console.log('[forceRefresh] no enable/connect method found, checking session state');
+                  debugLog('[forceRefresh] no enable/connect method found, checking session state');
                   if (provider.session && provider.session.namespaces) {
-                    console.log('[forceRefresh] provider has valid session, should be ready');
+                    debugLog('[forceRefresh] provider has valid session, should be ready');
                   }
                 }
               })(),
@@ -1490,11 +1512,11 @@ async function forceRefreshProvider(userInitiated = false) {
               )
             ]);
           } catch (enableError) {
-            console.warn('[forceRefresh] provider enable/connect failed or timed out:', enableError.message);
+            debugWarn('[forceRefresh] provider enable/connect failed or timed out:', enableError.message);
             // Continue anyway - sometimes the provider still works
           }
         } catch (e) {
-          console.warn('[forceRefresh] WalletConnect provider setup failed:', e);
+          debugWarn('[forceRefresh] WalletConnect provider setup failed:', e);
           // Continue anyway - sometimes it still works
         }
       }
@@ -1505,43 +1527,43 @@ async function forceRefreshProvider(userInitiated = false) {
       
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          console.log(`[forceRefresh] provider test attempt ${attempt}/3...`);
+          debugLog(`[forceRefresh] provider test attempt ${attempt}/3...`);
           
           // For WalletConnect, try different methods to check readiness
           if (isWalletConnect) {
-            console.log(`[forceRefresh] WC provider state check - connected:${provider.connected}, session:${!!provider.session}, accounts:${provider.session?.namespaces?.eip155?.accounts}`);
+            debugLog(`[forceRefresh] WC provider state check - connected:${provider.connected}, session:${!!provider.session}, accounts:${provider.session?.namespaces?.eip155?.accounts}`);
             
             // If we have session but not connected, try to reconnect
             if (provider.session && !provider.connected) {
-              console.log(`[forceRefresh] attempting to reconnect WC provider...`);
+              debugLog(`[forceRefresh] attempting to reconnect WC provider...`);
               try {
                 await provider.connect();
                 await new Promise(resolve => setTimeout(resolve, 500)); // Give it time
               } catch (reconnectError) {
-                console.warn('[forceRefresh] reconnect failed:', reconnectError);
+                debugWarn('[forceRefresh] reconnect failed:', reconnectError);
               }
             }
           }
           
           accounts = await provider.request({ method: 'eth_accounts' });
-          console.log('[forceRefresh] provider test - accounts:', accounts);
+          debugLog('[forceRefresh] provider test - accounts:', accounts);
           testError = null;
           break; // success
         } catch (e) {
           testError = e;
           const errorMsg = e?.message || String(e);
-          console.log(`[forceRefresh] test attempt ${attempt} failed:`, errorMsg);
+          debugLog(`[forceRefresh] test attempt ${attempt} failed:`, errorMsg);
           
           // If it's a "Please call connect() before request()" error, wait and retry
           if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
-            console.log(`[forceRefresh] provider not ready (attempt ${attempt}/3), waiting...`);
+            debugLog(`[forceRefresh] provider not ready (attempt ${attempt}/3), waiting...`);
             if (attempt < 3) {
               await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s between attempts
               continue;
             }
           } else {
             // Other errors - don't retry
-            console.warn(`[forceRefresh] provider test failed with non-connection error:`, e);
+            debugWarn(`[forceRefresh] provider test failed with non-connection error:`, e);
             break;
           }
         }
@@ -1552,7 +1574,7 @@ async function forceRefreshProvider(userInitiated = false) {
         if (errorMsg.includes('connect() before request') || errorMsg.includes('not connected')) {
           // For WalletConnect providers with broken sessions, force proper reconnection
           if (isWalletConnect) {
-            console.warn('[forceRefresh] WalletConnect provider has broken session - rejecting and clearing modal state');
+            debugWarn('[forceRefresh] WalletConnect provider has broken session - rejecting and clearing modal state');
             
             // Increment broken session counter
             brokenSessionCount++;
@@ -1564,27 +1586,27 @@ async function forceRefreshProvider(userInitiated = false) {
             
             // Check if we've exceeded max attempts
             if (brokenSessionCount >= MAX_BROKEN_SESSION_ATTEMPTS) {
-              console.warn('[forceRefresh] Too many broken sessions detected - entering extended cooldown');
+              debugWarn('[forceRefresh] Too many broken sessions detected - entering extended cooldown');
               showBanner('Multiple WalletConnect session failures detected - please wait 2 minutes before reconnecting', 'warning');
               return false;
             }
             
-            console.log(`[forceRefresh] Broken session #${brokenSessionCount} detected - clearing state`);
+            debugLog(`[forceRefresh] Broken session #${brokenSessionCount} detected - clearing state`);
             
             // Clear broken session state and force proper reconnection
             try {
-              console.log('[forceRefresh] Attempting to clear broken WalletConnect state...');
+              debugLog('[forceRefresh] Attempting to clear broken WalletConnect state...');
               
               // Method 1: Try resetWcConnection first (safer)
               if (modal && typeof modal.resetWcConnection === 'function') {
                 await modal.resetWcConnection();
-                console.log('[forceRefresh] resetWcConnection() succeeded');
+                debugLog('[forceRefresh] resetWcConnection() succeeded');
               }
               
               // Method 2: Try to disconnect more gently
               if (modal && typeof modal.disconnect === 'function') {
                 await modal.disconnect();
-                console.log('[forceRefresh] modal.disconnect() succeeded');
+                debugLog('[forceRefresh] modal.disconnect() succeeded');
               }
               
               // Method 3: Clear localStorage state that might be causing confusion
@@ -1592,7 +1614,7 @@ async function forceRefreshProvider(userInitiated = false) {
               localStorage.removeItem('@appkit/connections');
               localStorage.setItem('@appkit/connection_status', 'disconnected');
               
-              console.log('[forceRefresh] Cleared broken WalletConnect state - user will need to reconnect properly');
+              debugLog('[forceRefresh] Cleared broken WalletConnect state - user will need to reconnect properly');
               
               // Show helpful banner with retry button
               showBanner(
@@ -1613,33 +1635,33 @@ async function forceRefreshProvider(userInitiated = false) {
                 }]
               );
             } catch (clearError) {
-              console.warn('[forceRefresh] Error clearing broken state:', clearError);
+              debugWarn('[forceRefresh] Error clearing broken state:', clearError);
               
               // Fallback: Just clear localStorage if modal methods fail
               try {
                 localStorage.removeItem('@appkit/connection_status');
                 localStorage.removeItem('@appkit/connections');
                 localStorage.setItem('@appkit/connection_status', 'disconnected');
-                console.log('[forceRefresh] Fallback: cleared localStorage state');
+                debugLog('[forceRefresh] Fallback: cleared localStorage state');
               } catch (storageError) {
-                console.warn('[forceRefresh] Even localStorage cleanup failed:', storageError);
+                debugWarn('[forceRefresh] Even localStorage cleanup failed:', storageError);
               }
             }
             
             showBanner('WalletConnect session expired - please reconnect your wallet', 'warning');
             return false;
           } else {
-            console.warn('[forceRefresh] Non-WC provider not ready after retries - will set as active but may need connection finalization');
+            debugWarn('[forceRefresh] Non-WC provider not ready after retries - will set as active but may need connection finalization');
           }
         } else {
-          console.warn('[forceRefresh] provider test failed with error:', testError);
+          debugWarn('[forceRefresh] provider test failed with error:', testError);
           showBanner('Found provider but it\'s not working - try reconnecting', 'warning');
           return false;
         }
       } else if (!accounts || !accounts.length) {
-        console.warn('[forceRefresh] provider has no accounts - might be disconnected');
+        debugWarn('[forceRefresh] provider has no accounts - might be disconnected');
         // Don't fail here - could be a timing issue with mobile wallets
-        console.log('[forceRefresh] accepting provider anyway - accounts might appear after connection completes');
+        debugLog('[forceRefresh] accepting provider anyway - accounts might appear after connection completes');
       }
       
       activeEip1193Provider = provider;
@@ -1647,21 +1669,21 @@ async function forceRefreshProvider(userInitiated = false) {
       // For WalletConnect providers, try to "wake up" the connection
       if (isWalletConnect && provider.session) {
         try {
-          console.log('[forceRefresh] attempting to wake up WalletConnect connection...');
+          debugLog('[forceRefresh] attempting to wake up WalletConnect connection...');
           // Try a simple request to activate the connection
           await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
           const accounts = await provider.request({ method: 'eth_accounts' }).catch(() => null);
           if (accounts && accounts.length > 0) {
-            console.log('[forceRefresh] WalletConnect connection activated successfully');
+            debugLog('[forceRefresh] WalletConnect connection activated successfully');
           }
         } catch (e) {
-          console.debug('[forceRefresh] wake up attempt failed, provider may need more time:', e);
+          debugLog('[forceRefresh] wake up attempt failed, provider may need more time:', e);
         }
       }
       
       // DON'T attach event listeners immediately after force refresh
       // to prevent infinite loops - they'll be attached during normal connect flow
-      console.log('[forceRefresh] SUCCESS - provider set as active');
+      debugLog('[forceRefresh] SUCCESS - provider set as active');
       
       // update UI safely
       try {
@@ -1676,17 +1698,17 @@ async function forceRefreshProvider(userInitiated = false) {
             // Additional validation for WalletConnect providers that might need time to initialize
             if (activeEip1193Provider === provider) {
               try {
-                console.log('[forceRefresh] delayed validation - testing provider readiness...');
+                debugLog('[forceRefresh] delayed validation - testing provider readiness...');
                 const testAccounts = await provider.request({ method: 'eth_accounts' });
-                console.log('[forceRefresh] delayed validation - accounts:', testAccounts);
+                debugLog('[forceRefresh] delayed validation - accounts:', testAccounts);
                 
                 if (testAccounts && testAccounts.length > 0) {
-                  console.log('[forceRefresh] provider is now ready with accounts');
+                  debugLog('[forceRefresh] provider is now ready with accounts');
                 } else {
-                  console.log('[forceRefresh] provider ready but no accounts yet');
+                  debugLog('[forceRefresh] provider ready but no accounts yet');
                 }
               } catch (validationError) {
-                console.warn('[forceRefresh] delayed validation failed, provider may still need more time:', validationError);
+                debugWarn('[forceRefresh] delayed validation failed, provider may still need more time:', validationError);
               }
               
               signer = await (getEthersProvider())?.getSigner();
@@ -1700,14 +1722,14 @@ async function forceRefreshProvider(userInitiated = false) {
       
       // Reset broken session counters on successful provider refresh
       if (brokenSessionCount > 0) {
-        console.log('[forceRefresh] Successful provider refresh - resetting broken session counters');
+        debugLog('[forceRefresh] Successful provider refresh - resetting broken session counters');
         brokenSessionCount = 0;
         brokenSessionCooldownActive = false;
       }
       
       return true;
     } else {
-      console.warn('[forceRefresh] no usable provider found');
+      debugWarn('[forceRefresh] no usable provider found');
       showBanner('No usable provider found in modal - try reconnecting', 'warning');
       return false;
     }
@@ -1717,7 +1739,7 @@ async function forceRefreshProvider(userInitiated = false) {
     return false;
   } finally {
     forceRefreshInProgress = false;
-    console.log('🟠 [FUNCTION] forceRefreshProvider() COMPLETED');
+    debugLog('🟠 [FUNCTION] forceRefreshProvider() COMPLETED');
   }
 }
 
@@ -1725,24 +1747,24 @@ async function forceRefreshProvider(userInitiated = false) {
 function devDump() {
   try {
     console.group('DEV DIAGNOSTICS');
-    console.log('timestamp', Date.now());
-    console.log('navigator.userAgent', navigator.userAgent);
-    console.log('window.ethereum present?', !!(typeof window !== 'undefined' && window.ethereum));
-    try { console.log('window.ethereum', window.ethereum); } catch (e) {}
-    console.log('modal present?', !!modal);
-    try { console.log('modal.getProvider()', modal && modal.getProvider ? modal.getProvider() : null); } catch (e) {}
-    console.log('activeEip1193Provider', activeEip1193Provider);
-    try { console.log('active provider keys', activeEip1193Provider ? Object.keys(activeEip1193Provider) : null); } catch (e) {}
-    try { console.log('__lastWcErrorDetail', typeof __lastWcErrorDetail !== 'undefined' ? __lastWcErrorDetail : null); } catch (e) {}
+    debugLog('timestamp', Date.now());
+    debugLog('navigator.userAgent', navigator.userAgent);
+    debugLog('window.ethereum present?', !!(typeof window !== 'undefined' && window.ethereum));
+    try { debugLog('window.ethereum', window.ethereum); } catch (e) {}
+    debugLog('modal present?', !!modal);
+    try { debugLog('modal.getProvider()', modal && modal.getProvider ? modal.getProvider() : null); } catch (e) {}
+    debugLog('activeEip1193Provider', activeEip1193Provider);
+    try { debugLog('active provider keys', activeEip1193Provider ? Object.keys(activeEip1193Provider) : null); } catch (e) {}
+    try { debugLog('__lastWcErrorDetail', typeof __lastWcErrorDetail !== 'undefined' ? __lastWcErrorDetail : null); } catch (e) {}
     // run a lightweight finalize probe (non-invasive)
     try {
       const p = modal && modal.getProvider ? modal.getProvider() : null;
       if (p && typeof p.request === 'function') {
-        p.request({ method: 'eth_accounts' }).then(a => console.log('probe eth_accounts ->', a)).catch(e => console.log('probe eth_accounts failed', e));
+        p.request({ method: 'eth_accounts' }).then(a => debugLog('probe eth_accounts ->', a)).catch(e => debugLog('probe eth_accounts failed', e));
       }
     } catch (e) {}
-    console.log('Tip: on mobile, open browser devtools (remote) or use Ctrl+Shift+D to dump last WC error; include __lastWcErrorDetail in bug reports.');
-    console.log('Manual fix: if modal shows connected but app shows "no wallet", run: forceRefreshProvider()');
+    debugLog('Tip: on mobile, open browser devtools (remote) or use Ctrl+Shift+D to dump last WC error; include __lastWcErrorDetail in bug reports.');
+    debugLog('Manual fix: if modal shows connected but app shows "no wallet", run: forceRefreshProvider()');
     console.groupEnd();
   } catch (e) { console.error('devDump failed', e); }
 }
@@ -1762,17 +1784,17 @@ try {
   }
 } catch (e) {}
 
-async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Disconnect'; updateNetworkButtonVisibility(); clearBanner(); renderNetworkUIOnce(); } catch (e) { console.warn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
+async function tryUseInjectedNow() { if (typeof window !== 'undefined' && window.ethereum) { try { await window.ethereum.request({ method: 'eth_requestAccounts' }); activeEip1193Provider = window.ethereum; signer = (await getEthersProvider())?.getSigner(); connectBtn.textContent = 'Disconnect'; updateNetworkButtonVisibility(); clearBanner(); renderNetworkUIOnce(); } catch (e) { debugWarn(e); } } else { showBanner('No injected wallet found', 'warning'); } }
 
 async function tryRestoreConnection() {
-  console.log('🔄 [FUNCTION] tryRestoreConnection() STARTED');
-  console.log('[tryRestoreConnection] Starting connection restore process...');
+  debugLog('🔄 [FUNCTION] tryRestoreConnection() STARTED');
+  debugLog('[tryRestoreConnection] Starting connection restore process...');
   
   // Check if user has manually disconnected - respect their choice
   const connectionStatus = localStorage.getItem('@appkit/connection_status');
   if (connectionStatus === 'disconnected') {
-    console.log('[tryRestoreConnection] User manually disconnected - skipping auto-restore');
-    console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - MANUAL DISCONNECT');
+    debugLog('[tryRestoreConnection] User manually disconnected - skipping auto-restore');
+    debugLog('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - MANUAL DISCONNECT');
     return false;
   }
   
@@ -1780,7 +1802,7 @@ async function tryRestoreConnection() {
     // First try standard AppKit provider restoration
     if (modal && typeof modal.getProvider === 'function') {
       const p = modal.getProvider();
-      console.log('[tryRestoreConnection] modal.getProvider() result:', p);
+      debugLog('[tryRestoreConnection] modal.getProvider() result:', p);
       
       if (p && typeof p.request === 'function') {
         try { 
@@ -1788,7 +1810,7 @@ async function tryRestoreConnection() {
           if (ready) { 
             const accounts = await p.request({ method: 'eth_accounts' }).catch(() => []); 
             if (accounts && accounts.length) { 
-              console.log('[tryRestoreConnection] Standard provider restore successful');
+              debugLog('[tryRestoreConnection] Standard provider restore successful');
               activeEip1193Provider = p; 
               signer = (await getEthersProvider())?.getSigner(); 
               connectBtn.textContent = 'Disconnect'; 
@@ -1799,7 +1821,7 @@ async function tryRestoreConnection() {
             } 
           } 
         } catch (e) { 
-          console.debug('modal restore failed', e); 
+          debugLog('modal restore failed', e); 
         }
       }
       
@@ -1812,28 +1834,28 @@ async function tryRestoreConnection() {
           const isConnected = modal.getIsConnectedState?.();
           const caipAddress = modal.getCaipAddress?.();
           modalConnected = isConnected && caipAddress && caipAddress !== undefined;
-          console.log('[tryRestoreConnection] Modal connection state - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected);
+          debugLog('[tryRestoreConnection] Modal connection state - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected);
         } catch (e) {
-          console.debug('modal connection state check failed', e);
+          debugLog('modal connection state check failed', e);
         }
         
         if (modalConnected) {
-          console.log('[tryRestoreConnection] Modal shows connected state, attempting forceRefreshProvider...');
+          debugLog('[tryRestoreConnection] Modal shows connected state, attempting forceRefreshProvider...');
           const refreshSuccess = await forceRefreshProvider(false).catch((e) => { // Automatic
-            console.debug('forceRefreshProvider failed in tryRestoreConnection', e);
+            debugLog('forceRefreshProvider failed in tryRestoreConnection', e);
             return false;
           });
           if (refreshSuccess) {
-            console.log('[tryRestoreConnection] forceRefreshProvider succeeded on page refresh!');
+            debugLog('[tryRestoreConnection] forceRefreshProvider succeeded on page refresh!');
             return true;
           }
         } else {
-          console.log('[tryRestoreConnection] Modal not in connected state, skipping forceRefreshProvider');
+          debugLog('[tryRestoreConnection] Modal not in connected state, skipping forceRefreshProvider');
         }
       }
     } else if (modal) {
       // If modal exists but getProvider is not a function, still try forceRefreshProvider
-      console.log('[tryRestoreConnection] Modal exists but getProvider not available, trying forceRefreshProvider...');
+      debugLog('[tryRestoreConnection] Modal exists but getProvider not available, trying forceRefreshProvider...');
       const refreshSuccess = await forceRefreshProvider(false).catch(() => false); // Automatic
       if (refreshSuccess) {
         return true;
@@ -1845,26 +1867,26 @@ async function tryRestoreConnection() {
       try { 
         const accounts = await window.ethereum.request({ method: 'eth_accounts' }); 
         if (accounts && accounts.length) { 
-          console.log('[tryRestoreConnection] Injected provider restore successful');
+          debugLog('[tryRestoreConnection] Injected provider restore successful');
           activeEip1193Provider = window.ethereum; 
           signer = (await getEthersProvider())?.getSigner(); 
           connectBtn.textContent = 'Disconnect'; 
           updateNetworkButtonVisibility();
           renderNetworkUIOnce(); 
           // await updateCurrentNetworkStats();
-          console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - SUCCESS'); 
+          debugLog('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - SUCCESS'); 
           return true; 
         } 
       } catch (e) { 
-        console.debug('injected restore failed', e); 
+        debugLog('injected restore failed', e); 
       } 
     }
   } catch (e) { 
     console.error('restore connection error', e); 
   }
   
-  console.log('[tryRestoreConnection] No connection restored');
-  console.log('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - NO RESTORE');
+  debugLog('[tryRestoreConnection] No connection restored');
+  debugLog('🔄 [FUNCTION] tryRestoreConnection() COMPLETED - NO RESTORE');
   return false;
 }
 
@@ -1913,16 +1935,16 @@ if (typeof window !== 'undefined') {
         topic: extractedTopic,
       };
 
-      console.warn('Detected expired WalletConnect session/topic:', __lastWcErrorDetail);
+      debugWarn('Detected expired WalletConnect session/topic:', __lastWcErrorDetail);
       // clear optimistic provider state so UI/fallbacks can run
       try { activeEip1193Provider = null; } catch (e) {}
       // show reconnect banner with a CTA (do NOT auto-open modal)
       showBanner('WalletConnect session expired — please reconnect. Try switching networks (Wi‑Fi ↔ LTE) or use a VPN if your network blocks relay.walletconnect.org.', 'warning', [
-        { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { console.warn(e); } } },
+        { label: 'Reconnect', onClick: () => { try { initAppKit(); if (modal && typeof modal.open === 'function') modal.open(); } catch (e) { debugWarn(e); } } },
       ]);
       // perform a safe reset of local modal/provider state so stale session objects don't linger
       try {
-        console.warn('Resetting local AppKit/modal/provider state due to expired WalletConnect session/topic');
+        debugWarn('Resetting local AppKit/modal/provider state due to expired WalletConnect session/topic');
         try { if (modal && typeof modal.close === 'function') { modal.close(); } } catch (e) { console.debug('modal.close failed', e); }
         try { modal = null; } catch (e) {}
         try { activeEip1193Provider = null; } catch (e) {}
@@ -1930,7 +1952,7 @@ if (typeof window !== 'undefined') {
         // we keep networksRendered as-is to avoid re-render churn; UI will show reconnect banner
       } catch (e) { console.debug('safe reset failed', e); }
       // do not re-open modal automatically to avoid surprising deep-links; user must click Reconnect
-    } catch (e) { console.warn('handleExpiredWalletConnectSession error', e); }
+    } catch (e) { debugWarn('handleExpiredWalletConnectSession error', e); }
   }
 
   window.addEventListener('unhandledrejection', ev => {
@@ -1938,12 +1960,12 @@ if (typeof window !== 'undefined') {
       const reasonStr = (ev.reason && (ev.reason.stack || ev.reason.message || String(ev.reason))) || '';
       if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js')) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)');
+        debugWarn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)');
         return;
       }
       if (reasonStr.includes('No matching key') || reasonStr.includes("session topic doesn't exist") || reasonStr.includes('session topic')) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect session-topic error');
+        debugWarn('Suppressed WalletConnect session-topic error');
         // forward the full error object so we capture stack + details
         handleExpiredWalletConnectSession(reasonStr, ev.reason);
         return;
@@ -1957,12 +1979,12 @@ if (typeof window !== 'undefined') {
       const msgStr = String(msg || '');
       if (msgStr.includes('setDefaultChain') || msgStr.includes('browser-ponyfill.js')) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)');
+        debugWarn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain)');
         return;
       }
       if (msgStr.includes('No matching key') || msgStr.includes("session topic doesn't exist") || msgStr.includes('session topic')) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect session-topic error');
+        debugWarn('Suppressed WalletConnect session-topic error');
         handleExpiredWalletConnectSession(msgStr, ev.error || ev);
         return;
       }
@@ -1977,14 +1999,14 @@ let initCalled = false;
 export function init() {
   // Prevent multiple initialization
   if (initCalled) {
-    console.warn('init() already called - skipping duplicate initialization');
+    debugWarn('init() already called - skipping duplicate initialization');
     return;
   }
   initCalled = true;
   
   connectBtn = document.getElementById('connectBtn'); 
   networkBtn = document.getElementById('networkBtn');
-  console.log('[init] networkBtn element:', networkBtn);
+  debugLog('[init] networkBtn element:', networkBtn);
   networksRow = document.getElementById('networksRow'); 
   bannerContainer = document.createElement('div'); 
   bannerContainer.style.margin = '12px 0'; 
@@ -2000,7 +2022,7 @@ export function init() {
         try {
           if (window.devDump) window.devDump();
           showBanner('Dev dump written to console. Open DevTools to view.', 'info');
-        } catch (e) { console.warn('devDump failed', e); showBanner('devDump failed (see console)', 'danger'); }
+        } catch (e) { debugWarn('devDump failed', e); showBanner('devDump failed (see console)', 'danger'); }
       });
       
       // Add "Refresh Provider" button next to devBtn
@@ -2010,7 +2032,7 @@ export function init() {
       refreshBtn.addEventListener('click', async () => {
         try {
           if (window.forceRefreshProvider) await window.forceRefreshProvider();
-        } catch (e) { console.warn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
+        } catch (e) { debugWarn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
       });
       
       // Emergency disconnect button
@@ -2019,7 +2041,7 @@ export function init() {
       emergencyBtn.textContent = 'Emergency Reset';
       emergencyBtn.addEventListener('click', () => {
         try {
-          console.warn('EMERGENCY RESET triggered by user');
+          debugWarn('EMERGENCY RESET triggered by user');
           activeEip1193Provider = null;
           signer = null;
           if (modal) {
@@ -2041,7 +2063,7 @@ export function init() {
   connectBtn.addEventListener('click', async () => {
     // Prevent double-clicks and rapid toggling
     if (isConnectingOrDisconnecting) {
-      console.log('🔘 [CLICK] Already processing connection/disconnection - ignoring');
+      debugLog('🔘 [CLICK] Already processing connection/disconnection - ignoring');
       return;
     }
     
@@ -2054,10 +2076,10 @@ export function init() {
     try {
       // Use the captured state to decide action
       if (shouldDisconnect) {
-        console.log('🔘 [CLICK] Disconnect button clicked - calling disconnect()');
+        debugLog('🔘 [CLICK] Disconnect button clicked - calling disconnect()');
         await disconnect();
       } else {
-        console.log('🔘 [CLICK] Connect button clicked - calling connect()');
+        debugLog('🔘 [CLICK] Connect button clicked - calling connect()');
         await connect();
       }
     } finally {
@@ -2071,9 +2093,9 @@ export function init() {
   
   // Network button - open AppKit network modal
   if (networkBtn) {
-    console.log('[init] Adding click listener to network button');
+    debugLog('[init] Adding click listener to network button');
     networkBtn.addEventListener('click', () => {
-      console.log('🌐 [NETWORK BUTTON] Opening AppKit network selector');
+      debugLog('🌐 [NETWORK BUTTON] Opening AppKit network selector');
       try {
         const modal = initAppKit();
         if (modal && typeof modal.open === 'function') {
@@ -2087,7 +2109,7 @@ export function init() {
       }
     });
   } else {
-    console.warn('[init] networkBtn element not found!');
+    debugWarn('[init] networkBtn element not found!');
   }
   
   renderNetworkUIOnce(); 
@@ -2097,22 +2119,22 @@ export function init() {
   // Sometimes the modal needs extra time to initialize its session state
   setTimeout(async () => {
     if (!activeEip1193Provider && modal) {
-      console.log('[delayed-check] No active provider after 5s, checking modal state...');
+      debugLog('[delayed-check] No active provider after 5s, checking modal state...');
       try {
         const isConnected = modal.getIsConnectedState?.();
         const caipAddress = modal.getCaipAddress?.();
         const modalConnected = isConnected && caipAddress && caipAddress !== undefined;
         
-        console.log('[delayed-check] Modal state - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected);
+        debugLog('[delayed-check] Modal state - isConnected:', isConnected, 'caipAddress:', caipAddress, 'modalConnected:', modalConnected);
         
         if (modalConnected) {
-          console.log('[delayed-check] Modal appears connected, trying forceRefreshProvider...');
+          debugLog('[delayed-check] Modal appears connected, trying forceRefreshProvider...');
           await forceRefreshProvider(false).catch(e => console.debug('delayed refresh failed', e)); // Automatic
         } else {
-          console.log('[delayed-check] Modal not connected, no action needed');
+          debugLog('[delayed-check] Modal not connected, no action needed');
         }
       } catch (e) {
-        console.debug('delayed check error', e);
+        debugLog('delayed check error', e);
       }
     }
   }, 5000);
@@ -2153,7 +2175,7 @@ if (typeof window !== 'undefined') {
         lastStackOverflowTime = now;
         
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Stack overflow suppressed (count: ' + stackOverflowCount + ')');
+        debugWarn('Stack overflow suppressed (count: ' + stackOverflowCount + ')');
         return;
       }
       
@@ -2164,7 +2186,7 @@ if (typeof window !== 'undefined') {
         try { ev.preventDefault(); } catch (e) {}
         // Suppress the noisy walletconnect internal error popup. Log a concise
         // warning for debugging but avoid alerting the user repeatedly.
-        console.warn('Suppressed WalletConnect browser-ponyfill error (setDefaultChain). See console for details.');
+        debugWarn('Suppressed WalletConnect browser-ponyfill error (setDefaultChain). See console for details.');
         return;
       }
       // If it looks like a DNS/network failure to the WC relay, show a tip
@@ -2178,7 +2200,7 @@ if (typeof window !== 'undefined') {
       // which surface when internal controller objects are not yet ready.
       if (reasonStr.includes('setDefaultChain') || reasonStr.includes('browser-ponyfill.js') || (reasonStr.includes('Cannot read properties of undefined') && reasonStr.includes('setDefaultChain'))) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain). See console for details.');
+        debugWarn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain). See console for details.');
         return;
       }
 
@@ -2188,7 +2210,7 @@ if (typeof window !== 'undefined') {
       // and don't need to bubble as uncaught exceptions in the app UI.
       if (reasonStr.includes("No matching key") || reasonStr.includes("session topic doesn't exist")) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect session-topic error:', reasonStr.split('\n')[0]);
+        debugWarn('Suppressed WalletConnect session-topic error:', reasonStr.split('\n')[0]);
         return;
       }
     } catch (e) {}
@@ -2201,7 +2223,7 @@ if (typeof window !== 'undefined') {
       // Suppress the same browser-ponyfill setDefaultChain TypeError
       if (msgStr.includes('setDefaultChain') || msgStr.includes('browser-ponyfill.js') || (msgStr.includes('Cannot read properties of undefined') && msgStr.includes('setDefaultChain'))) {
         try { ev.preventDefault(); } catch (e) {}
-        console.warn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain). See console for details.');
+        debugWarn('Suppressed WalletConnect/browser-ponyfill error (setDefaultChain). See console for details.');
         return;
       }
       console.error('Global error:', ev.error || ev.message, ev);
