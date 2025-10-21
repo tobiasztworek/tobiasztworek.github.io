@@ -4,7 +4,7 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 
 // Debug mode - set to false to disable debug logs
 const DEBUG_MODE = false;
@@ -157,6 +157,10 @@ function updateNetworkButtonVisibility() {
 
 function showBanner(message, type = 'info', actions = []) {
   if (!bannerContainer) return;
+  
+  // Hide 'info' banners when DEBUG_MODE is disabled
+  if (type === 'info' && !DEBUG_MODE) return;
+  
   bannerContainer.innerHTML = '';
   const el = document.createElement('div');
   el.className = `alert alert-${type}`;
@@ -2013,49 +2017,53 @@ export function init() {
   const header = document.querySelector('header');
   if (header) {
     header.appendChild(bannerContainer);
-    try {
-      const devBtn = document.createElement('button');
-      devBtn.className = 'btn btn-sm btn-secondary ms-2';
-      devBtn.textContent = 'Dump logs';
-      devBtn.style.marginLeft = '8px';
-      devBtn.addEventListener('click', () => {
-        try {
-          if (window.devDump) window.devDump();
-          showBanner('Dev dump written to console. Open DevTools to view.', 'info');
-        } catch (e) { debugWarn('devDump failed', e); showBanner('devDump failed (see console)', 'danger'); }
-      });
-      
-      // Add "Refresh Provider" button next to devBtn
-      const refreshBtn = document.createElement('button');
-      refreshBtn.className = 'btn btn-sm btn-warning ms-2';
-      refreshBtn.textContent = 'Refresh Provider';
-      refreshBtn.addEventListener('click', async () => {
-        try {
-          if (window.forceRefreshProvider) await window.forceRefreshProvider();
-        } catch (e) { debugWarn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
-      });
-      
-      // Emergency disconnect button
-      const emergencyBtn = document.createElement('button');
-      emergencyBtn.className = 'btn btn-sm btn-danger ms-2';
-      emergencyBtn.textContent = 'Emergency Reset';
-      emergencyBtn.addEventListener('click', () => {
-        try {
-          debugWarn('EMERGENCY RESET triggered by user');
-          activeEip1193Provider = null;
-          signer = null;
-          if (modal) {
-            try { modal.disconnect?.(); } catch (e) {}
-          }
-          connectBtn.textContent = 'Connect Wallet';
-          showBanner('Emergency reset completed - try connecting again', 'warning');
-        } catch (e) { console.error('Emergency reset failed', e); }
-      });
-      
-      header.appendChild(devBtn);
-      header.appendChild(refreshBtn);
-      header.appendChild(emergencyBtn);
-    } catch (e) { console.debug('failed to add dev buttons', e); }
+    
+    // Add dev buttons only in DEBUG_MODE
+    if (DEBUG_MODE) {
+      try {
+        const devBtn = document.createElement('button');
+        devBtn.className = 'btn btn-sm btn-secondary ms-2';
+        devBtn.textContent = 'Dump logs';
+        devBtn.style.marginLeft = '8px';
+        devBtn.addEventListener('click', () => {
+          try {
+            if (window.devDump) window.devDump();
+            showBanner('Dev dump written to console. Open DevTools to view.', 'info');
+          } catch (e) { debugWarn('devDump failed', e); showBanner('devDump failed (see console)', 'danger'); }
+        });
+        
+        // Add "Refresh Provider" button next to devBtn
+        const refreshBtn = document.createElement('button');
+        refreshBtn.className = 'btn btn-sm btn-warning ms-2';
+        refreshBtn.textContent = 'Refresh Provider';
+        refreshBtn.addEventListener('click', async () => {
+          try {
+            if (window.forceRefreshProvider) await window.forceRefreshProvider();
+          } catch (e) { debugWarn('forceRefreshProvider failed', e); showBanner('Provider refresh failed', 'danger'); }
+        });
+        
+        // Emergency disconnect button
+        const emergencyBtn = document.createElement('button');
+        emergencyBtn.className = 'btn btn-sm btn-danger ms-2';
+        emergencyBtn.textContent = 'Emergency Reset';
+        emergencyBtn.addEventListener('click', () => {
+          try {
+            debugWarn('EMERGENCY RESET triggered by user');
+            activeEip1193Provider = null;
+            signer = null;
+            if (modal) {
+              try { modal.disconnect?.(); } catch (e) {}
+            }
+            connectBtn.textContent = 'Connect Wallet';
+            showBanner('Emergency reset completed - try connecting again', 'warning');
+          } catch (e) { console.error('Emergency reset failed', e); }
+        });
+        
+        header.appendChild(devBtn);
+        header.appendChild(refreshBtn);
+        header.appendChild(emergencyBtn);
+      } catch (e) { console.debug('failed to add dev buttons', e); }
+    }
   }
   
   let isConnectingOrDisconnecting = false;
