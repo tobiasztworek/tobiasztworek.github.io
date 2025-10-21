@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild gm_test2.js --bundle --minify --sourcemap --outfile=dist/gm_test2.bundle.js",
-    "build:watch": "esbuild gm_test2.js --bundle --sourcemap --outfile=dist/gm_test2.bundle.js --watch"
+    "build": "esbuild gm.js --bundle --minify --sourcemap --outfile=dist/gm.bundle.js",
+    "build:watch": "esbuild gm.js --bundle --sourcemap --outfile=dist/gm.bundle.js --watch",
+    "build:old": "esbuild gm_test2.js --bundle --minify --sourcemap --outfile=dist/gm_test2.bundle.js"
   },
   "dependencies": {
     "@reown/appkit": "^1.8.10",

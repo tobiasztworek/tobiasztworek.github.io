@@ -1,40 +1,67 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>GM dApp Multi-Chain</title>
-    
-<!-- DNS Pre-connect: Force browser to resolve DNS and establish connections early -->
-<link rel="dns-prefetch" href="https://relay.walletconnect.org">
-<link rel="preconnect" href="https://relay.walletconnect.org">
-<link rel="dns-prefetch" href="https://sepolia.base.org">
-<link rel="preconnect" href="https://sepolia.base.org">
-<link rel="dns-prefetch" href="https://sepolia.optimism.io">
-<link rel="preconnect" href="https://sepolia.optimism.io">
-<link rel="dns-prefetch" href="https://rpc.sepolia.org">
-<link rel="preconnect" href="https://rpc.sepolia.org">
-
-<!-- Bootstrap 5 CSS -->
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="gm_test2.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="0; url=gm.html">
+    <title>Redirecting...</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+        .redirect-box {
+            padding: 2rem;
+        }
+        .redirect-box h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        .redirect-box p {
+            font-size: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+        .redirect-box a {
+            color: white;
+            text-decoration: underline;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body>
-
-<header class="d-flex align-items-center">
-	<h1>🌅 GM dApp Multi-Chain v.2.0.1</h1>
-	<div class="d-flex align-items-center ms-auto">
-		<button id="networkBtn" class="btn btn-outline-light me-2" style="display:none;">🌐 Networks</button>
-		<button id="connectBtn" class="btn btn-light">Connect Wallet</button>
-	</div>
-</header>
-
-<div id="networksContainer" class="container">
-	<div class="row g-4" id="networksRow">
-		<!-- Kontenery sieci wstawiane tutaj -->
-	</div>
-</div>
-
-    <script src="dist/gm_test2.bundle.js?v=2.0.1" defer></script>
+    <div class="redirect-box">
+        <h1>🌅 GM dApp</h1>
+        <p>Redirecting to the new address...</p>
+        <div class="spinner"></div>
+        <p style="margin-top: 1.5rem; font-size: 1rem;">
+            If you are not redirected automatically, 
+            <a href="gm.html">click here</a>.
+        </p>
+    </div>
+    <script>
+        // Fallback redirect in case meta refresh doesn't work
+        setTimeout(() => {
+            window.location.href = 'gm.html';
+        }, 100);
+    </script>
 </body>
 </html>
