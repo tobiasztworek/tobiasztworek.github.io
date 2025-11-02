@@ -52,6 +52,19 @@ header h1 {
   color: 0x222222;
 }
 
+.section-header {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #4f46e5;
+  margin: 1.5rem 0 1rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 3px solid #e0e7ff;
+}
+
+.section-header:first-child {
+  margin-top: 0;
+}
+
 @media (max-width: 576px) {
   header {
     flex-direction: column;

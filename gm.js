@@ -1,10 +1,10 @@
 import { ethers } from 'ethers';
 import { createAppKit } from '@reown/appkit';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
-import { base, baseSepolia, celo, optimismSepolia, sepolia } from '@reown/appkit/networks';
+import { base, baseSepolia, celo, optimismSepolia, sepolia, soneium } from '@reown/appkit/networks';
 
 // Version
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.0.2';
 
 // Debug mode - set to false to disable debug logs
 const DEBUG_MODE = false;
@@ -53,18 +53,58 @@ let connectBtn, bannerContainer, networksRow, networkBtn;
 //0x99510A8C66Af928635287CE6E3a480cE788c3960 base mainnet contract
 //0xea97aE69A60ec6cc3549ea912ad6617E65d480fB celo mainnet contract
 
-// Networks
+// Networks - organized: MAINNETS first, then TESTNETS
 const NETWORKS = [
+  // ============= MAINNETS =============
+  {
+    name: 'Base',
+    chainId: '0x2105',
+    contractAddress: '0xeA49F6480A8724eF118DC94c288C01f1Ab506212',
+    rpcUrl: 'https://mainnet.base.org',
+    explorer: 'https://basescan.org/',
+    buttonColor: '#1a46e5',
+    logoUrl: 'img/base.jpg',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    feeFunction: 'getGmFeeInEth',
+    isTestnet: false,
+  },
+  {
+    name: 'Celo Mainnet',
+    chainId: '0xa4ec',
+    contractAddress: '0xA98C403d3797301Ca0Af7EA3A4861434D81B7719',
+    rpcUrl: 'https://forno.celo.org',
+    explorer: 'https://celoscan.io/',
+    buttonColor: '#fcec0cff',
+    logoUrl: 'img/celo.jpg',
+    nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+    feeFunction: 'getGmFeeInCelo',
+    isTestnet: false,
+  },
+  {
+    name: 'Soneium',
+    chainId: '0x74c',
+    contractAddress: '0x475Cd87C2FfCE7e3Fd5fDEE3CD6BC68A6A3BD569',
+    rpcUrl: 'https://rpc.soneium.org',
+    explorer: 'https://explorer.soneium.org/',
+    buttonColor: '#00d4ff',
+    logoUrl: 'img/soneium.ico',
+    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+    feeFunction: 'getGmFeeInEth',
+    isTestnet: false,
+  },
+
+  // ============= TESTNETS =============
   {
     name: 'Base Sepolia',
     chainId: '0x14a34',
-    contractAddress: '0x714Be7D3D4fB4D52c714b00afFd1F297FD0E023f',
+    contractAddress: '0x279414Be086ED747B01254F94a2159E2d5bdC9FF',
     rpcUrl: 'https://base-sepolia.rpc.thirdweb.com',
     explorer: 'https://sepolia.basescan.org/',
     buttonColor: '#1a46e5',
     logoUrl: 'img/base.jpg',
     nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-    feeFunction: 'getGmFeeInEth', // Function name in contract
+    feeFunction: 'getGmFeeInEth',
+    isTestnet: true,
   },
   {
     name: 'Ethereum Sepolia',
@@ -76,6 +116,7 @@ const NETWORKS = [
     logoUrl: 'img/ether.svg',
     nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
     feeFunction: 'getGmFeeInEth',
+    isTestnet: true,
   },
   {
     name: 'Optimism Sepolia',
@@ -87,33 +128,9 @@ const NETWORKS = [
     logoUrl: 'img/optimism.svg',
     nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
     feeFunction: 'getGmFeeInEth',
+    isTestnet: true,
   },
 
-
-
-  // mainnets 
-  {
-    name: 'Base',
-    chainId: '0x2105',
-    contractAddress: '0x99510A8C66Af928635287CE6E3a480cE788c3960',
-    rpcUrl: 'https://mainnet.base.org',
-    explorer: 'https://basescan.org/',
-    buttonColor: '#1a46e5',
-    logoUrl: 'img/base.jpg',
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    feeFunction: 'getGmFeeInEth',
-  },
-    {
-    name: 'Celo Mainnet',
-    chainId: '0xa4ec',
-    contractAddress: '0xea97aE69A60ec6cc3549ea912ad6617E65d480fB',
-    rpcUrl: 'https://forno.celo.org',
-    explorer: 'https://celoscan.io/',
-    buttonColor: '#fcec0cff',
-    logoUrl: 'img/celo.jpg',
-    nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
-    feeFunction: 'getGmFeeInCelo', // Special function for Celo
-  }
 ];
 
 const GM_ABI = [
@@ -129,7 +146,7 @@ export function initAppKit() {
     if (modal && typeof modal.open === 'function') return modal;
     modal = createAppKit({
       adapters: [new EthersAdapter()],
-      networks: [base, baseSepolia, celo, optimismSepolia, sepolia],
+      networks: [base, baseSepolia, celo, optimismSepolia, sepolia, soneium],
       metadata,
       projectId,
       features: { connectMethodsOrder: ['wallet'] },
@@ -290,7 +307,32 @@ async function addNetworkById(chainId) {
 }
 
 // ----- UI rendering -----
-function renderNetworkUIOnce() { if (networksRendered) return; networksRendered = true; NETWORKS.forEach(renderNetworkCard); }
+function renderNetworkUIOnce() { 
+  if (networksRendered) return; 
+  networksRendered = true; 
+  
+  // Separate networks into mainnets and testnets
+  const mainnets = NETWORKS.filter(n => !n.isTestnet);
+  const testnets = NETWORKS.filter(n => n.isTestnet);
+  
+  // Render mainnets section
+  if (mainnets.length > 0) {
+    const mainnetHeader = document.createElement('div');
+    mainnetHeader.className = 'col-12';
+    mainnetHeader.innerHTML = '<h2 class="section-header">🚀 Mainnet Networks</h2>';
+    networksRow.appendChild(mainnetHeader);
+    mainnets.forEach(renderNetworkCard);
+  }
+  
+  // Render testnets section
+  if (testnets.length > 0) {
+    const testnetHeader = document.createElement('div');
+    testnetHeader.className = 'col-12 mt-4';
+    testnetHeader.innerHTML = '<h2 class="section-header">🧪 Testnet Networks</h2>';
+    networksRow.appendChild(testnetHeader);
+    testnets.forEach(renderNetworkCard);
+  }
+}
 
 function renderNetworkCard(net) {
   if (!networksRow) return;
@@ -763,11 +805,56 @@ async function switchToNetwork(net) {
   debugLog('🔶 [SWITCH] Params:', JSON.stringify(params));
   debugLog('🔶 [SWITCH] AddParams:', JSON.stringify(addParams));
   if (p && typeof p.request === 'function') {
-    try { await p.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await p.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { debugWarn('addChain failed', e); } } else { debugWarn('provider switch failed', err); } }
+    try { 
+      await p.request({ method: 'wallet_switchEthereumChain', params }); 
+      return true; 
+    } catch (err) { 
+      console.log('[SWITCH] wallet_switchEthereumChain error:', err.code, err.message);
+      // Check if chain is not recognized - try to add it
+      // Error code 4902 = chain not added, -32603 = unrecognized chain
+      const shouldAddChain = err && (err.code === 4902 || err.code === -32603 || 
+                                     (err.message && err.message.includes('Unrecognized chain')));
+      if (shouldAddChain) { 
+        try { 
+          console.log('[SWITCH] Chain not found, attempting to add:', net.name);
+          await p.request({ method: 'wallet_addEthereumChain', params: addParams }); 
+          return true; 
+        } catch (e) { 
+          console.error('[SWITCH] addChain failed:', e);
+          debugWarn('addChain failed', e); 
+        } 
+      } else { 
+        console.error('[SWITCH] provider switch failed:', err);
+        debugWarn('provider switch failed', err); 
+      } 
+    }
   }
   if (typeof window !== 'undefined' && window.ethereum && typeof window.ethereum.request === 'function') {
-    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params }); return true; } catch (err) { if (err && err.code === 4902) { try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: addParams }); return true; } catch (e) { debugWarn('window addChain failed', e); } } else { debugWarn('window switch failed', err); } }
+    try { 
+      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params }); 
+      return true; 
+    } catch (err) { 
+      console.log('[SWITCH WINDOW] wallet_switchEthereumChain error:', err.code, err.message);
+      // Check if chain is not recognized - try to add it
+      // Error code 4902 = chain not added, -32603 = unrecognized chain
+      const shouldAddChain = err && (err.code === 4902 || err.code === -32603 || 
+                                     (err.message && err.message.includes('Unrecognized chain')));
+      if (shouldAddChain) { 
+        try { 
+          console.log('[SWITCH WINDOW] Chain not found, attempting to add:', net.name);
+          await window.ethereum.request({ method: 'wallet_addEthereumChain', params: addParams }); 
+          return true; 
+        } catch (e) { 
+          console.error('[SWITCH WINDOW] addChain failed:', e);
+          debugWarn('window addChain failed', e); 
+        } 
+      } else { 
+        console.error('[SWITCH WINDOW] provider switch failed:', err);
+        debugWarn('window switch failed', err); 
+      } 
+    }
   }
+  console.error('[SWITCH] No provider available or all attempts failed');
   showBanner('No wallet provider available for network switch. Connect a wallet or switch the network manually in your wallet.', 'warning', [ { label: 'Connect', onClick: () => connect() } ]);
   debugLog('🔶 [FUNCTION] switchToNetwork() COMPLETED - FAILED');
   return false;
